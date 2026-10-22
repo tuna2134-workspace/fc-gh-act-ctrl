@@ -252,6 +252,7 @@ func (c *mmdsClient) metadata(ctx context.Context, token string) (*metadata, err
 func (c *mmdsClient) waitForMetadata(ctx context.Context) (*metadata, error) {
 	backoff := 200 * time.Millisecond
 	var lastErr error
+	var lastLog time.Time
 	for {
 		token, err := c.token(ctx)
 		if err == nil {
@@ -262,6 +263,12 @@ func (c *mmdsClient) waitForMetadata(ctx context.Context) (*metadata, error) {
 			lastErr = err
 		} else {
 			lastErr = err
+		}
+		// Always surface the first failure; repeating it every 30s keeps the
+		// console useful without flooding it.
+		if lastLog.IsZero() || time.Since(lastLog) >= 30*time.Second {
+			log.Printf("waiting for MMDS metadata: %v", lastErr)
+			lastLog = time.Now()
 		}
 		select {
 		case <-ctx.Done():
