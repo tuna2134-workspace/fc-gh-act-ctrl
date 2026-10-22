@@ -33,7 +33,7 @@ func New(opts Options) *http.Server {
 	router.Use(middleware.RequestID)
 	router.Use(middleware.RealIP)
 	router.Use(middleware.Recoverer)
-	router.Use(requestLogger(log))
+	router.Use(requestLogger(log, opts.Config.WebhookPath))
 
 	router.Method(http.MethodPost, opts.Config.WebhookPath, opts.Webhook)
 	router.Get(opts.Config.HealthPath, func(w http.ResponseWriter, _ *http.Request) {
@@ -84,20 +84,38 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 	return r.ResponseWriter.Write(b)
 }
 
-func requestLogger(log *slog.Logger) func(http.Handler) http.Handler {
+func requestLogger(log *slog.Logger, webhookPath string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			rec := &statusRecorder{ResponseWriter: w}
 			next.ServeHTTP(rec, r)
-			level := slog.LevelInfo
-			if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
-				level = slog.LevelDebug
+
+			status := rec.status
+			if status == 0 {
+				status = http.StatusOK
+			}
+			// Only webhook traffic and server errors belong in the INFO/WARN
+			// log. Internet scanners constantly probe paths like /.env; those
+			// 404s would otherwise bury useful output.
+			level := slog.LevelDebug
+			switch {
+			case r.URL.Path == webhookPath:
+				switch {
+				case status >= 500:
+					level = slog.LevelError
+				case status >= 400:
+					level = slog.LevelWarn
+				default:
+					level = slog.LevelInfo
+				}
+			case status >= 500:
+				level = slog.LevelError
 			}
 			log.Log(r.Context(), level, "http request",
 				"method", r.Method,
 				"path", r.URL.Path,
-				"status", rec.status,
+				"status", status,
 				"duration", time.Since(start).Round(time.Millisecond).String(),
 				"request_id", middleware.GetReqID(r.Context()),
 			)

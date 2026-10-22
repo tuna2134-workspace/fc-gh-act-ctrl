@@ -1,4 +1,5 @@
 server:
+  # リバースプロキシを使う場合は 127.0.0.1:8080 にして直接公開を避ける
   listen: "0.0.0.0:8080"
   webhook_path: "/webhook"
   health_path: "/healthz"

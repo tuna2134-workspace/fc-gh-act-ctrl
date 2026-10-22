@@ -126,6 +126,41 @@ bin/fcghact rootfs inspect --ref ghcr.io/OWNER/fcghact-rootfs:v1
 
 本番ではタグではなく **ダイジェスト固定** (`ghcr.io/...@sha256:...`) を推奨します。pull 時に image manifest とレイヤのダイジェストを検証します。
 
+## 公開とアクセス制御
+
+Webhook は GitHub から到達できる必要があります。インターネットに公開すると `/.env` や
+`/.git/config` を探す自動スキャンが常時来ますが、404 を返すだけで影響はありません。
+既定では **Webhook 以外のアクセスログは DEBUG レベル**で出力されるため、INFO ログが
+スキャンで埋まることはありません (`log.level: debug` にすると確認できます)。
+
+推奨:
+
+- `server.listen` を `127.0.0.1:8080` にして、リバースプロキシで `/webhook` だけ公開する。
+- `/metrics` と `/healthz` は外部公開しない。
+- `server.webhook_path` を推測しにくいパスにする (ログノイズ軽減。認証は HMAC が担う)。
+
+Caddy の例:
+
+```caddyfile
+example.com {
+    handle /webhook {
+        reverse_proxy 127.0.0.1:8080
+    }
+    respond 404
+}
+```
+
+nginx の例:
+
+```nginx
+location = /webhook {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+location / { return 404; }
+```
+
 ## ワークフロー側
 
 ```yaml
@@ -222,6 +257,8 @@ scripts              ホストセットアップ用スクリプト
 - `install: cannot stat 'app.pem'` が出る場合、`app.pem` はリポジトリに含まれない。GitHub App の
   **Private keys** からダウンロードした実際の `.pem` のパスを `install` に渡す
   (`sudo install -m 600 ~/Downloads/<app-name>.private-key.pem /etc/fcghact/app.pem`)。
+- `/.env` や `/.git/config` への 404 がログに出る場合、インターネットスキャナからのアクセス。
+  404 は正常で、INFO レベルでは記録されない。外部公開を `/webhook` だけに絞るとなお良い。
 - Webhook が届いているかは `fcghact_webhooks_total` とログの `delivery` で確認する。
 - OCI の pull が `UNAUTHORIZED` になる場合は、root で `docker login ghcr.io` するか `rootfs.token_env` を設定する。`fcghact rootfs inspect` で参照と認証を切り分けられる。
 

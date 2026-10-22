@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -36,6 +37,38 @@ func testServer(t *testing.T, ready func(context.Context) error) http.Handler {
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	return srv.Handler
+}
+
+func TestRequestLoggerSuppressesScannerPaths(t *testing.T) {
+	notFound := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	var infoBuf bytes.Buffer
+	infoLogger := slog.New(slog.NewJSONHandler(&infoBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	requestLogger(infoLogger, "/webhook")(notFound).ServeHTTP(
+		httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/.env", nil))
+	assert.Empty(t, infoBuf.String(), "scanner 404s must not be logged at INFO")
+
+	var debugBuf bytes.Buffer
+	debugLogger := slog.New(slog.NewJSONHandler(&debugBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	requestLogger(debugLogger, "/webhook")(notFound).ServeHTTP(
+		httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/.env", nil))
+	assert.Contains(t, debugBuf.String(), `"level":"DEBUG"`)
+	assert.Contains(t, debugBuf.String(), `"/.env"`)
+}
+
+func TestRequestLoggerLogsWebhookFailures(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	unauthorized := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	requestLogger(logger, "/webhook")(unauthorized).ServeHTTP(
+		httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/webhook", nil))
+
+	assert.Contains(t, buf.String(), `"level":"WARN"`)
+	assert.Contains(t, buf.String(), `"status":401`)
 }
 
 func TestHealthEndpoints(t *testing.T) {
