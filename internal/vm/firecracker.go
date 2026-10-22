@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	firecracker "github.com/firecracker-microvm/firecracker-go-sdk"
@@ -306,6 +307,24 @@ func (b *FirecrackerBackend) Start(ctx context.Context, spec Spec) (Handle, erro
 	return h, nil
 }
 
+// archiveLogs moves the VM logs into the persistent log directory.
+func (b *FirecrackerBackend) archiveLogs(dir, id string) {
+	target := filepath.Join(b.cfg.StateDir, "logs", id)
+	if err := os.MkdirAll(target, 0o750); err != nil {
+		b.log.Warn("create log archive", "vm", id, "error", err)
+		return
+	}
+	for _, name := range []string{"console.log", "firecracker.log", "vm.json"} {
+		src := filepath.Join(dir, name)
+		if _, err := os.Stat(src); err != nil {
+			continue
+		}
+		if err := os.Rename(src, filepath.Join(target, name)); err != nil {
+			b.log.Warn("archive log", "vm", id, "file", name, "error", err)
+		}
+	}
+}
+
 func (b *FirecrackerBackend) unregister(id string) {
 	b.mu.Lock()
 	delete(b.active, id)
@@ -412,6 +431,7 @@ func (h *machineHandle) ID() string           { return h.id }
 func (h *machineHandle) IP() string           { return h.ip }
 func (h *machineHandle) RunnerName() string   { return h.runner }
 func (h *machineHandle) StartedAt() time.Time { return h.startedAt }
+func (h *machineHandle) ConsolePath() string  { return filepath.Join(h.dir, "console.log") }
 func (h *machineHandle) Wait() error {
 	<-h.done
 	h.errMu.Lock()
@@ -430,6 +450,9 @@ func (h *machineHandle) Stop(ctx context.Context) error {
 		case <-time.After(10 * time.Second):
 		}
 		h.log.Warn("firecracker did not exit after SIGTERM, killing")
+		if pid, err := h.machine.PID(); err == nil && pid > 0 {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
 		if err := killVMsBySocket(context.Background(), h.socket); err != nil {
 			h.log.Warn("kill firecracker", "error", err)
 		}
@@ -461,6 +484,9 @@ func (h *machineHandle) finish(err error) {
 				h.log.Warn("release network lease", "error", err)
 			}
 			h.backend.unregister(h.id)
+		}
+		if h.backend != nil && h.backend.cfg.KeepLogs {
+			h.backend.archiveLogs(h.dir, h.id)
 		}
 		if err := os.RemoveAll(h.dir); err != nil {
 			h.log.Warn("remove vm dir", "dir", h.dir, "error", err)

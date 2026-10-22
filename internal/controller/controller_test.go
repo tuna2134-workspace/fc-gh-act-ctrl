@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -85,11 +87,12 @@ func splitRepo(repo string) (string, string, bool) {
 }
 
 type fakeAPI struct {
-	mu         sync.Mutex
-	requests   []githubapp.JITRequest
-	runnerName string
-	status     githubapp.JobStatus
-	jitErr     error
+	mu          sync.Mutex
+	requests    []githubapp.JITRequest
+	runnerName  string
+	statuses    map[int64]githubapp.JobStatus
+	defaultStat githubapp.JobStatus
+	jitErr      error
 }
 
 func (f *fakeAPI) GenerateJITConfig(_ context.Context, _ githubapp.Scope, req githubapp.JITRequest) (*githubapp.JITConfig, error) {
@@ -103,15 +106,30 @@ func (f *fakeAPI) GenerateJITConfig(_ context.Context, _ githubapp.Scope, req gi
 	return &githubapp.JITConfig{Encoded: "encoded-jit", RunnerName: req.Name, RunnerID: 5}, nil
 }
 
+func (f *fakeAPI) setStatus(id int64, status githubapp.JobStatus) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.statuses == nil {
+		f.statuses = make(map[int64]githubapp.JobStatus)
+	}
+	f.statuses[id] = status
+}
+
 func (f *fakeAPI) GetJobStatus(_ context.Context, _ githubapp.Scope, id int64) (*githubapp.JobStatus, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	status := f.status
+	status := f.defaultStat
+	if s, ok := f.statuses[id]; ok {
+		status = s
+	}
 	if status.Status == "" {
 		status.Status = "queued"
 	}
-	if status.RunnerName == "" && f.runnerName != "" && status.Status != "queued" {
+	if status.RunnerName == "" && f.runnerName != "" && status.Status == "in_progress" {
 		status.RunnerName = f.runnerName
+	}
+	if status.RunnerID == 0 && status.Status == "in_progress" {
+		status.RunnerID = 5
 	}
 	status.ID = id
 	return &status, nil
@@ -172,18 +190,20 @@ func (b *fakeBackend) handleAt(i int) *fakeHandle {
 }
 
 type fakeHandle struct {
-	id     string
-	runner string
-	done   chan struct{}
-	once   sync.Once
-	stops  int
-	mu     sync.Mutex
+	id      string
+	runner  string
+	console string
+	done    chan struct{}
+	once    sync.Once
+	stops   int
+	mu      sync.Mutex
 }
 
 func (h *fakeHandle) ID() string           { return h.id }
 func (h *fakeHandle) IP() string           { return "172.31.0.2" }
 func (h *fakeHandle) RunnerName() string   { return h.runner }
 func (h *fakeHandle) StartedAt() time.Time { return time.Now() }
+func (h *fakeHandle) ConsolePath() string  { return h.console }
 
 func (h *fakeHandle) Wait() error {
 	<-h.done
@@ -211,7 +231,7 @@ func (h *fakeHandle) stopped() bool {
 
 func TestControllerDispatchesAndStopsOnCompletion(t *testing.T) {
 	cfg := testConfig()
-	api := &fakeAPI{status: githubapp.JobStatus{Status: "in_progress"}}
+	api := &fakeAPI{}
 	backend := &fakeBackend{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctrl := New(cfg, api, backend, log)
@@ -234,6 +254,7 @@ func TestControllerDispatchesAndStopsOnCompletion(t *testing.T) {
 	require.Eventually(t, func() bool { return api.count() == 1 && backend.count() == 1 }, 3*time.Second, 10*time.Millisecond)
 
 	req := api.lastRequest()
+	api.setStatus(101, githubapp.JobStatus{Status: "in_progress"})
 	assert.Equal(t, []string{"fcghact"}, req.Labels)
 	assert.Equal(t, int64(1), req.RunnerGroupID)
 	assert.Contains(t, req.Name, "-j101-")
@@ -253,7 +274,7 @@ func TestControllerDispatchesAndStopsOnCompletion(t *testing.T) {
 
 func TestControllerDeduplicatesQueuedDeliveries(t *testing.T) {
 	cfg := testConfig()
-	api := &fakeAPI{status: githubapp.JobStatus{Status: "in_progress"}}
+	api := &fakeAPI{}
 	backend := &fakeBackend{}
 	ctrl := New(cfg, api, backend, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
@@ -303,11 +324,35 @@ func TestControllerIgnoresNonMatchingJobs(t *testing.T) {
 	assert.Equal(t, 0, backend.count())
 }
 
+func TestSessionRunnerIdleFromConsole(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "console.log")
+	require.NoError(t, os.WriteFile(path, []byte("booting\nListening for Jobs\n"), 0o600))
+
+	h := &fakeHandle{console: path, done: make(chan struct{})}
+	sess := newSession(&Job{ID: 1, Repo: githubapp.Repo{Owner: "o", Name: "r"}}, "runner", 1, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	sess.attach(h)
+
+	idle, known := sess.runnerIdle()
+	require.True(t, known)
+	assert.True(t, idle)
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	require.NoError(t, err)
+	_, err = f.WriteString("Running job: build\n")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	idle, known = sess.runnerIdle()
+	require.True(t, known)
+	assert.False(t, idle)
+}
+
 func TestControllerEnforcesPerRepoLimit(t *testing.T) {
 	cfg := testConfig()
 	cfg.Runner.MaxConcurrentJobs = 2
 	cfg.Runner.MaxJobsPerRepo = 1
-	api := &fakeAPI{status: githubapp.JobStatus{Status: "in_progress"}}
+	api := &fakeAPI{}
 	backend := &fakeBackend{}
 	ctrl := New(cfg, api, backend, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
@@ -326,6 +371,7 @@ func TestControllerEnforcesPerRepoLimit(t *testing.T) {
 	require.NoError(t, ctrl.HandleWorkflowJob(ctx, queuedEvent(1, []string{"self-hosted", "fcghact"}, "owner/repo"), "a"))
 	require.NoError(t, ctrl.HandleWorkflowJob(ctx, queuedEvent(2, []string{"self-hosted", "fcghact"}, "owner/repo"), "b"))
 	require.Eventually(t, func() bool { return backend.count() == 1 }, 3*time.Second, 10*time.Millisecond)
+	api.setStatus(1, githubapp.JobStatus{Status: "in_progress"})
 
 	time.Sleep(150 * time.Millisecond)
 	assert.Equal(t, 1, backend.count(), "second job must wait for the repository slot")

@@ -53,6 +53,8 @@ firecracker:
   # reflink uses FICLONE for instant copy-on-write rootfs clones. It falls back
   # to a full copy on filesystems that do not support it.
   reflink: true
+  # Copy console.log / firecracker.log to <state_dir>/logs/<vm-id>/ on exit.
+  keep_logs: false
 
 network:
   manage_bridge: true

@@ -57,6 +57,9 @@ type Handle interface {
 	IP() string
 	RunnerName() string
 	StartedAt() time.Time
+	// ConsolePath is the serial console log on the host. It is empty when the
+	// backend does not expose one.
+	ConsolePath() string
 	// Wait blocks until the VMM has exited and all resources are released.
 	Wait() error
 	// Stop asks the VMM to exit, escalating to SIGKILL, and waits for cleanup.

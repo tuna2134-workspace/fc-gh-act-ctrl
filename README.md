@@ -141,7 +141,7 @@ scripts              ホストセットアップ用スクリプト
 ## トラブルシューティング
 
 - `doctor` で前提条件を確認する。
-- VM のコンソールログは `/var/lib/fcghact/vms/<vm-id>/console.log`、Firecracker のログは同ディレクトリの `firecracker.log` に残る。
+- VM 実行中のコンソールログは `/var/lib/fcghact/vms/<vm-id>/console.log`、Firecracker のログは同ディレクトリの `firecracker.log` にある。VM 終了時に削除されるため、保存したい場合は `firecracker.keep_logs: true` を設定する (保存先は `<state_dir>/logs/<vm-id>/`)。
 - 異常終了後に残った VM は `fcghact cleanup` で回収する (起動時にも自動回収される)。
 - `permission denied` が出る場合は root で実行しているか、`/dev/kvm` のパーミッションを確認する。
 - Webhook が届いているかは `fcghact_webhooks_total` とログの `delivery` で確認する。

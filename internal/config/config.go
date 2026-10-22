@@ -119,6 +119,9 @@ type FirecrackerConfig struct {
 	// Reflink enables copy-on-write rootfs clones (FICLONE). Falls back to a
 	// full copy when the filesystem does not support it.
 	Reflink bool `yaml:"reflink" env:"FIRECRACKER_REFLINK"`
+	// KeepLogs copies console and Firecracker logs to <state_dir>/logs/<vm-id>/
+	// before the VM directory is removed. Useful for debugging failed jobs.
+	KeepLogs bool `yaml:"keep_logs" env:"FIRECRACKER_KEEP_LOGS"`
 }
 
 // NetworkConfig describes the host networking used by microVMs.

@@ -5,7 +5,9 @@ package controller
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +23,8 @@ import (
 
 // Job is a workflow job accepted for execution.
 type Job struct {
+	// Attempts counts internal retries after a VM exit without assignment.
+	Attempts       int
 	ID             int64
 	RunID          int64
 	Repo           githubapp.Repo
@@ -227,6 +231,18 @@ func (c *Controller) startJob(ctx context.Context, job *Job) {
 	}()
 
 	scope := c.scopeFor(job)
+
+	// The job may have been picked up by another runner while it waited for a
+	// slot, in which case starting a VM would only create an idle runner.
+	if st, err := c.api.GetJobStatus(ctx, scope, job.ID); err != nil {
+		c.log.Warn("could not verify job state before dispatch", "job_id", job.ID, "error", err)
+	} else if st.Status != "" && st.Status != "queued" || st.RunnerName != "" || st.RunnerID != 0 {
+		c.log.Info("job is no longer queued, dropping",
+			"job_id", job.ID, "status", st.Status, "runner", st.RunnerName)
+		metrics.JobsFinished.WithLabelValues("skipped").Inc()
+		return
+	}
+
 	const maxAttempts = 2
 
 	var (
@@ -261,7 +277,7 @@ func (c *Controller) startJob(ctx context.Context, job *Job) {
 			return
 		}
 
-		sess = newSession(job, runnerName, c.log)
+		sess = newSession(job, runnerName, jit.RunnerID, c.log)
 		c.sessions.add(sess)
 		handle, err = c.vms.Start(ctx, vm.Spec{
 			ID:         uuid.NewString(),
@@ -303,8 +319,19 @@ func (c *Controller) startJob(ctx context.Context, job *Job) {
 	waitErr := handle.Wait()
 	lifetime := time.Since(handle.StartedAt())
 
+	var final *githubapp.JobStatus
+	if ctx.Err() == nil {
+		if st, err := c.api.GetJobStatus(ctx, scope, job.ID); err != nil {
+			c.log.Warn("failed to fetch final job status", "job_id", job.ID, "error", err)
+		} else {
+			final = st
+		}
+	}
+
 	result := "completed"
 	switch {
+	case final != nil && final.Status == "completed" && final.Conclusion != "":
+		result = final.Conclusion
 	case sess.stopWasRequested():
 		result = "stopped"
 	case waitErr != nil:
@@ -319,6 +346,19 @@ func (c *Controller) startJob(ctx context.Context, job *Job) {
 		"result", result,
 		"lifetime", lifetime.Round(time.Second).String(),
 	)
+
+	// If the runner never picked the job up (network error, JIT registration
+	// failure, idle timeout) the job is still queued. Requeue it once or twice
+	// instead of waiting for a webhook that will never arrive.
+	if final != nil && final.Status == "queued" && final.RunnerName == "" && job.Attempts < 2 {
+		retry := *job
+		retry.Attempts++
+		c.log.Warn("job is still queued after the runner exited, requeueing",
+			"job_id", job.ID, "attempt", retry.Attempts)
+		if err := c.sched.Enqueue(&retry); err != nil {
+			c.log.Warn("failed to requeue job", "job_id", job.ID, "error", err)
+		}
+	}
 }
 
 func (c *Controller) monitor(ctx context.Context) {
@@ -337,47 +377,63 @@ func (c *Controller) monitor(ctx context.Context) {
 }
 
 func (c *Controller) reconcile(ctx context.Context) {
+	regTimeout := c.cfg.Runner.RegistrationTimeout.Duration()
 	for _, sess := range c.sessions.snapshot() {
 		handle := sess.currentHandle()
 		if handle == nil {
 			continue
 		}
 		age := time.Since(handle.StartedAt())
-		scope := c.scopeFor(sess.job)
 
-		status, err := c.api.GetJobStatus(ctx, scope, sess.job.ID)
+		// A hard cap always applies, even if GitHub status lookups fail.
+		if age > c.maxLifetime() {
+			c.log.Warn("microvm exceeded maximum lifetime, stopping", "job_id", sess.job.ID, "runner", sess.runnerName)
+			sess.requestStop()
+			continue
+		}
+
+		status, err := c.api.GetJobStatus(ctx, c.scopeFor(sess.job), sess.job.ID)
 		if err != nil {
 			c.log.Warn("failed to fetch job status", "job_id", sess.job.ID, "runner", sess.runnerName, "error", err)
-			if age > c.maxLifetime() {
-				c.log.Warn("job exceeded maximum lifetime, stopping", "job_id", sess.job.ID, "runner", sess.runnerName)
-				sess.requestStop()
+			// Without the API, fall back to console-based idle detection.
+			if age > 2*regTimeout {
+				if idle, known := sess.runnerIdle(); known && idle {
+					c.log.Warn("runner is idle, stopping microvm", "job_id", sess.job.ID, "runner", sess.runnerName)
+					sess.requestStop()
+				}
 			}
 			continue
 		}
 
+		// Only stop early when this job was actually assigned to our runner.
+		// JIT runners can pick up a different queued job, in which case the
+		// original job's status says nothing about what the VM is doing.
+		assignedToUs := sess.runnerID != 0 && status.RunnerID == sess.runnerID
+		if !assignedToUs && status.RunnerName != "" && status.RunnerName == sess.runnerName {
+			assignedToUs = true
+		}
+
 		switch status.Status {
 		case "completed":
-			sess.requestStop()
-		case "in_progress":
-			if status.RunnerName != "" && status.RunnerName != sess.runnerName {
-				c.log.Warn("job was assigned to a different runner, stopping idle vm",
-					"job_id", sess.job.ID, "runner", sess.runnerName, "assigned", status.RunnerName)
+			if assignedToUs {
 				sess.requestStop()
-			} else if age > c.cfg.Runner.JobTimeout.Duration() {
+			}
+		case "in_progress":
+			if assignedToUs && age > c.cfg.Runner.JobTimeout.Duration() {
 				c.log.Warn("job timeout exceeded, stopping vm", "job_id", sess.job.ID, "runner", sess.runnerName)
 				sess.requestStop()
 			}
 		case "queued":
-			if status.RunnerName == "" && age > c.cfg.Runner.RegistrationTimeout.Duration() {
-				c.log.Warn("runner did not pick up the job, stopping idle vm",
-					"job_id", sess.job.ID, "runner", sess.runnerName)
-				sess.requestStop()
+			// The runner has not picked up the original job. It may be running
+			// another job, so consult the console log before killing it.
+			if status.RunnerName == "" && age > regTimeout {
+				idle, known := sess.runnerIdle()
+				if (known && idle) || (!known && age > 2*regTimeout) {
+					c.log.Warn("runner did not pick up a job, stopping idle vm",
+						"job_id", sess.job.ID, "runner", sess.runnerName, "console_known", known)
+					sess.requestStop()
+				}
 			}
-		}
-
-		if age > c.maxLifetime() {
-			c.log.Warn("microvm exceeded maximum lifetime, stopping", "job_id", sess.job.ID, "runner", sess.runnerName)
-			sess.requestStop()
 		}
 	}
 }
@@ -568,15 +624,76 @@ func (r *sessionRegistry) snapshot() []*session {
 type session struct {
 	job        *Job
 	runnerName string
+	runnerID   int64
 	log        *slog.Logger
 
 	mu            sync.Mutex
 	handle        vm.Handle
 	stopRequested bool
+
+	consoleMu    sync.Mutex
+	consoleOff   int64
+	runnerBusy   bool
+	sawListening bool
 }
 
-func newSession(job *Job, runnerName string, log *slog.Logger) *session {
-	return &session{job: job, runnerName: runnerName, log: log}
+// runnerIdle inspects new serial console output for the Actions runner's own
+// markers. It is best-effort: the second return value reports whether a marker
+// has been seen at all.
+func (s *session) runnerIdle() (bool, bool) {
+	handle := s.currentHandle()
+	if handle == nil || handle.ConsolePath() == "" {
+		return false, false
+	}
+	path := handle.ConsolePath()
+
+	s.consoleMu.Lock()
+	defer s.consoleMu.Unlock()
+
+	f, err := os.Open(path)
+	if err != nil {
+		return false, s.sawListening || s.runnerBusy
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return false, s.sawListening || s.runnerBusy
+	}
+	size := info.Size()
+	if size < s.consoleOff {
+		s.consoleOff = 0
+		s.runnerBusy = false
+		s.sawListening = false
+	}
+	if size == s.consoleOff {
+		return s.sawListening && !s.runnerBusy, s.sawListening || s.runnerBusy
+	}
+
+	const maxRead = 1 << 20
+	off := s.consoleOff
+	if size-off > maxRead {
+		off = size - maxRead
+	}
+	if _, err := f.Seek(off, io.SeekStart); err != nil {
+		return false, s.sawListening || s.runnerBusy
+	}
+	buf := make([]byte, size-off)
+	n, _ := io.ReadFull(f, buf)
+	s.consoleOff = off + int64(n)
+	for _, line := range strings.Split(string(buf[:n]), "\n") {
+		switch {
+		case strings.Contains(line, "Listening for Jobs"):
+			s.runnerBusy = false
+			s.sawListening = true
+		case strings.Contains(line, "Running job:"):
+			s.runnerBusy = true
+		}
+	}
+	return s.sawListening && !s.runnerBusy, s.sawListening || s.runnerBusy
+}
+
+func newSession(job *Job, runnerName string, runnerID int64, log *slog.Logger) *session {
+	return &session{job: job, runnerName: runnerName, runnerID: runnerID, log: log}
 }
 
 func (s *session) attach(handle vm.Handle) {
