@@ -31,6 +31,8 @@ runner:
   labels: ["self-hosted", "linux", "x64", "fcghact"]
   # A job must carry all of these labels before the controller will run it.
   require_labels: ["fcghact"]
+  # Advertise cpu-<n>, memory-<n>g and disk-<n>g labels automatically.
+  resource_labels: true
   runner_group_id: 1
   work_folder: /opt/actions-runner/_work
   name_prefix: fcghact

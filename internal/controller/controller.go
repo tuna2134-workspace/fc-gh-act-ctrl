@@ -157,8 +157,9 @@ func (c *Controller) handleQueued(job *github.WorkflowJob, repo githubapp.Repo, 
 		log.Debug("ignoring job that already has a runner", "runner", job.GetRunnerName())
 		return "ignored", nil
 	}
-	if !MatchLabels(job.Labels, c.cfg.Runner.Labels, c.cfg.Runner.RequireLabels) {
-		log.Debug("ignoring job with non-matching labels", "labels", job.Labels)
+	runnerLabels := c.runnerLabels()
+	if !MatchLabels(job.Labels, runnerLabels, c.cfg.Runner.RequireLabels) {
+		log.Debug("ignoring job with non-matching labels", "labels", job.Labels, "runner_labels", runnerLabels)
 		return "ignored", nil
 	}
 
@@ -273,7 +274,7 @@ func (c *Controller) startJob(ctx context.Context, job *Job) {
 		c.log.Info("requesting just-in-time runner", "job_id", job.ID, "runner", runnerName, "attempt", attempt)
 		jit, err := c.api.GenerateJITConfig(ctx, scope, githubapp.JITRequest{
 			Name:          runnerName,
-			Labels:        JITLabels(c.cfg.Runner.Labels),
+			Labels:        c.runnerLabels(),
 			RunnerGroupID: c.cfg.Runner.RunnerGroupID,
 			WorkFolder:    c.cfg.Runner.WorkFolder,
 		})
@@ -487,6 +488,58 @@ func (c *Controller) allowed(repo githubapp.Repo, org string) bool {
 		}
 	}
 	return false
+}
+
+// ResourceLabels returns the resource labels advertised by a runner with the
+// given CPU, memory and disk size.
+func ResourceLabels(vcpu, memoryMiB, diskBytes int64) []string {
+	const (
+		mib = int64(1 << 20)
+		gib = int64(1 << 30)
+	)
+	out := make([]string, 0, 3)
+	if vcpu > 0 {
+		out = append(out, fmt.Sprintf("cpu-%d", vcpu))
+	}
+	if memoryMiB > 0 {
+		if memoryMiB%1024 == 0 {
+			out = append(out, fmt.Sprintf("memory-%dg", memoryMiB/1024))
+		} else {
+			out = append(out, fmt.Sprintf("memory-%dm", memoryMiB))
+		}
+	}
+	if diskBytes > 0 {
+		if diskBytes%gib == 0 {
+			out = append(out, fmt.Sprintf("disk-%dg", diskBytes/gib))
+		} else {
+			out = append(out, fmt.Sprintf("disk-%dm", (diskBytes+mib-1)/mib))
+		}
+	}
+	return out
+}
+
+// runnerLabels is the effective label set advertised by the JIT runner.
+func (c *Controller) runnerLabels() []string {
+	labels := append([]string(nil), c.cfg.Runner.Labels...)
+	if c.cfg.Runner.ResourceLabels {
+		labels = append(labels, ResourceLabels(
+			c.cfg.Firecracker.VCPUCount,
+			c.cfg.Firecracker.MemSizeMiB,
+			c.diskSizeBytes(),
+		)...)
+	}
+	return JITLabels(labels)
+}
+
+func (c *Controller) diskSizeBytes() int64 {
+	if c.cfg.Firecracker.RootfsImage == "" {
+		return 0
+	}
+	info, err := os.Stat(c.cfg.Firecracker.RootfsImage)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
 }
 
 // JITLabels normalises the labels sent to generate-jitconfig. The API does not

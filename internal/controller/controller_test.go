@@ -43,6 +43,31 @@ func TestMatchLabels(t *testing.T) {
 	}
 }
 
+func TestResourceLabels(t *testing.T) {
+	assert.Equal(t,
+		[]string{"cpu-4", "memory-8g", "disk-16g"},
+		ResourceLabels(4, 8192, 16<<30))
+	assert.Equal(t,
+		[]string{"cpu-2", "memory-1500m", "disk-6656m"},
+		ResourceLabels(2, 1500, 6656<<20))
+	assert.Empty(t, ResourceLabels(0, 0, 0))
+}
+
+func TestRunnerLabelsIncludeDiskSize(t *testing.T) {
+	cfg := testConfig()
+	path := filepath.Join(t.TempDir(), "rootfs.ext4")
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	require.NoError(t, f.Truncate(8<<30))
+	require.NoError(t, f.Close())
+	cfg.Firecracker.RootfsImage = path
+
+	ctrl := New(cfg, &fakeAPI{}, &fakeBackend{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	assert.Subset(t, ctrl.runnerLabels(), []string{
+		"self-hosted", "linux", "x64", "fcghact", "cpu-2", "memory-2g", "disk-8g",
+	})
+}
+
 func TestJITLabels(t *testing.T) {
 	assert.Equal(t,
 		[]string{"self-hosted", "Linux", "X64", "fcghact", "gpu"},
@@ -258,7 +283,7 @@ func TestControllerDispatchesAndStopsOnCompletion(t *testing.T) {
 
 	req := api.lastRequest()
 	api.setStatus(101, githubapp.JobStatus{Status: "in_progress"})
-	assert.Equal(t, []string{"self-hosted", "linux", "x64", "fcghact"}, req.Labels)
+	assert.Subset(t, req.Labels, []string{"self-hosted", "linux", "x64", "fcghact", "cpu-2", "memory-2g"})
 	assert.Equal(t, int64(1), req.RunnerGroupID)
 	assert.Contains(t, req.Name, "-j101-")
 

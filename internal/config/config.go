@@ -111,11 +111,14 @@ type GitHubConfig struct {
 
 // RunnerConfig describes the runner and scheduling behaviour.
 type RunnerConfig struct {
-	Labels              []string `yaml:"labels" env:"RUNNER_LABELS" envSeparator:","`
-	RequireLabels       []string `yaml:"require_labels" env:"RUNNER_REQUIRE_LABELS" envSeparator:","`
-	RunnerGroupID       int64    `yaml:"runner_group_id" env:"RUNNER_GROUP_ID"`
-	WorkFolder          string   `yaml:"work_folder" env:"RUNNER_WORK_FOLDER"`
-	NamePrefix          string   `yaml:"name_prefix" env:"RUNNER_NAME_PREFIX"`
+	Labels        []string `yaml:"labels" env:"RUNNER_LABELS" envSeparator:","`
+	RequireLabels []string `yaml:"require_labels" env:"RUNNER_REQUIRE_LABELS" envSeparator:","`
+	RunnerGroupID int64    `yaml:"runner_group_id" env:"RUNNER_GROUP_ID"`
+	WorkFolder    string   `yaml:"work_folder" env:"RUNNER_WORK_FOLDER"`
+	NamePrefix    string   `yaml:"name_prefix" env:"RUNNER_NAME_PREFIX"`
+	// ResourceLabels advertises cpu-<n>, memory-<n>g and disk-<n>g labels
+	// derived from the VM configuration and the rootfs image size.
+	ResourceLabels      bool     `yaml:"resource_labels" env:"RUNNER_RESOURCE_LABELS"`
 	MaxConcurrentJobs   int      `yaml:"max_concurrent_jobs" env:"RUNNER_MAX_CONCURRENT_JOBS"`
 	MaxJobsPerRepo      int      `yaml:"max_jobs_per_repo" env:"RUNNER_MAX_JOBS_PER_REPO"`
 	QueueSize           int      `yaml:"queue_size" env:"RUNNER_QUEUE_SIZE"`
@@ -182,6 +185,7 @@ func Default() *Config {
 			RunnerGroupID:       1,
 			WorkFolder:          "/opt/actions-runner/_work",
 			NamePrefix:          "fcghact",
+			ResourceLabels:      true,
 			MaxConcurrentJobs:   4,
 			MaxJobsPerRepo:      2,
 			QueueSize:           128,

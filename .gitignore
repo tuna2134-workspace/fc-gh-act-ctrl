@@ -4,3 +4,4 @@
 *.ext4
 coverage.out
 /.tmp-*
+/fcghact

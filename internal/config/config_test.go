@@ -30,6 +30,7 @@ func TestLoadDefaultsAndEnvOverrides(t *testing.T) {
 	assert.Equal(t, []string{"9.9.9.9", "149.112.112.112"}, cfg.Network.DNS)
 	assert.Equal(t, 2048, int(cfg.Firecracker.MemSizeMiB))
 	assert.Equal(t, "repo", cfg.GitHub.Scope)
+	assert.True(t, cfg.Runner.ResourceLabels)
 }
 
 func TestLoadYAMLOverlayAndDuration(t *testing.T) {

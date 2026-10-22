@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
+	"github.com/tuna2134-workspace/fc-gh-act-ctrl/internal/controller"
 	"github.com/tuna2134-workspace/fc-gh-act-ctrl/internal/githubapp"
 	"github.com/tuna2134-workspace/fc-gh-act-ctrl/internal/network"
 	"github.com/tuna2134-workspace/fc-gh-act-ctrl/internal/vm"
@@ -93,12 +94,23 @@ func runJob(cmd *cobra.Command, _ []string) error {
 	if status.Status != "queued" {
 		return fmt.Errorf("job %d is %q; only queued jobs can be dispatched", runJobID, status.Status)
 	}
-	log.Info("dispatching job manually", "job_id", runJobID, "repository", repo.String(), "labels", status.Labels)
+	labels := append([]string(nil), cfg.Runner.Labels...)
+	if cfg.Runner.ResourceLabels {
+		var disk int64
+		if info, err := os.Stat(cfg.Firecracker.RootfsImage); err == nil {
+			disk = info.Size()
+		}
+		labels = append(labels, controller.ResourceLabels(
+			cfg.Firecracker.VCPUCount, cfg.Firecracker.MemSizeMiB, disk)...)
+	}
+	labels = controller.JITLabels(labels)
+	log.Info("dispatching job manually", "job_id", runJobID, "repository", repo.String(),
+		"job_labels", status.Labels, "runner_labels", labels)
 
 	runnerName := fmt.Sprintf("%s-manual-%d", cfg.Runner.NamePrefix, runJobID)
 	jit, err := apiSvc.GenerateJITConfig(ctx, scope, githubapp.JITRequest{
 		Name:          runnerName,
-		Labels:        cfg.Runner.Labels,
+		Labels:        labels,
 		RunnerGroupID: cfg.Runner.RunnerGroupID,
 		WorkFolder:    cfg.Runner.WorkFolder,
 	})

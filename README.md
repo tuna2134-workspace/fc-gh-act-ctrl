@@ -213,6 +213,27 @@ jobs:
 
 `runner.labels` は JIT config に **そのまま** 渡されます。GitHub は `self-hosted` や OS/arch を自動追加しないため、ジョブが要求するラベルをすべて含めてください（既定は `self-hosted,linux,x64,fcghact`）。
 
+### リソースラベル
+
+`runner.resource_labels`（既定 `true`）を有効にすると、VM のスペックが JIT ラベルとして自動追加されます。
+
+| ラベル | 例 | 意味 |
+|---|---|---|
+| `cpu-<n>` | `cpu-4` | vCPU 数 |
+| `memory-<n>g` / `memory-<n>m` | `memory-8g` | メモリ (GiB。1024 の倍数でない場合は MiB) |
+| `disk-<n>g` / `disk-<n>m` | `disk-16g` | ベース rootfs のファイルサイズ (GiB。倍数でない場合は MiB) |
+
+ジョブ側でサイズを指定できます。
+
+```yaml
+runs-on: [self-hosted, fcghact, cpu-4, memory-8g, disk-16g]
+```
+
+- `disk-*` は `firecracker.rootfs_image` の実サイズです。ベースを `truncate` で拡張すると、次のジョブから新しい `disk-*` ラベルになります（コントローラ再起動不要）。
+- 指定したサイズのランナーがないジョブは queued のままです。ベースを拡張した後にキュー済みだったジョブは、ワークフローを再実行してください。
+- 無効化する場合は `runner.resource_labels: false`。
+- 複数スペックのコントローラを並べる場合は、`runner.name_prefix` を分けてください。
+
 ## コマンド
 
 | コマンド | 説明 |
@@ -235,7 +256,8 @@ jobs:
 | `github.scope` | `repo` | JIT config を repo / org のどちらで発行するか |
 | `github.repositories` | 空 | 許可する `owner/name` のリスト。空なら全インストール先 |
 | `github.organizations` | 空 | 許可する組織名のリスト |
-| `runner.labels` | `self-hosted,linux,x64,fcghact` | ランナーが広告するラベル |
+| `runner.labels` | `self-hosted,linux,x64,fcghact` | ランナーが広告する基本ラベル |
+| `runner.resource_labels` | `true` | `cpu-*` / `memory-*` / `disk-*` を自動追加 |
 | `runner.require_labels` | `fcghact` | ジョブが必ず含むべきラベル |
 | `runner.max_concurrent_jobs` | `4` | 同時に起動する VM 数 |
 | `runner.max_jobs_per_repo` | `2` | 1 リポジトリあたりの同時実行数 |
