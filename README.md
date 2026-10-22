@@ -38,6 +38,7 @@ sudo ./scripts/download-kernel.sh
 sudo ./scripts/setup-host.sh
 
 # 4. rootfs のビルド (Docker が必要)
+#    runner のバージョンは既定で 2.338.1。必要なら RUNNER_VERSION で上書きする
 sudo ./scripts/build-rootfs.sh
 
 # 5. 設定
@@ -309,6 +310,7 @@ scripts              ホストセットアップ用スクリプト
 - rootfs の reflink は btrfs / XFS (reflink=1) でのみ高速です。それ以外はフルコピーになります。
 - 1 ホスト 1 コントローラです (state dir の flock で二重起動を防ぎます)。
 - ゲストにはコンテナランタイムを入れていないため、Docker コンテナアクションやサービスコンテナは動きません。必要な場合は rootfs にランタイムを追加してください (ネスト仮想化は不可)。
+- GitHub は古い Actions runner を拒否します (`Runner version ... is deprecated and cannot receive messages`)。rootfs の `RUNNER_VERSION` (既定 2.338.1) は定期的に更新してください。最新版は [actions/runner releases](https://github.com/actions/runner/releases) で確認できます。
 - コントローラ再起動中に届かなかった Webhook は失われます。再起動後に queued のままのジョブは手動で `fcghact run` するか、Webhook を再配信してください。
 - jailer / UFFD スナップショット / CNI は未実装です ([docs/design.md](docs/design.md#10-ロードマップ))。
 

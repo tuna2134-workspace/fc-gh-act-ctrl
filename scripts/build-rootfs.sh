@@ -8,7 +8,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${OUT_DIR:-${ROOT_DIR}/.build}"
 ROOTFS_IMAGE="${ROOTFS_IMAGE:-/var/lib/fcghact/rootfs.ext4}"
 ROOTFS_SIZE="${ROOTFS_SIZE:-2G}"
-RUNNER_VERSION="${RUNNER_VERSION:-2.323.0}"
+RUNNER_VERSION="${RUNNER_VERSION:-2.338.1}"
 CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-}"
 case "$(uname -m)" in
   aarch64 | arm64) GOARCH=arm64; RUNNER_ARCH=arm64 ;;

@@ -121,8 +121,9 @@ func runRunner(dir string, meta *metadata) (int, error) {
 	if _, err := os.Stat(script); err != nil {
 		return 0, fmt.Errorf("runner script: %w", err)
 	}
-	// --disableupdate keeps the ephemeral VM on the image's runner version.
-	args := []string{"--jitconfig", meta.JITConfig, "--disableupdate"}
+	// run.sh only accepts --jitconfig and --startuptype; --disableupdate is a
+	// config.sh flag and is rejected by the run command.
+	args := []string{"--jitconfig", meta.JITConfig}
 	cmd := exec.Command(script, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
