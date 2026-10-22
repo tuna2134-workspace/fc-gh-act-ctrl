@@ -18,7 +18,7 @@ RUN apt-get update \
       systemd systemd-sysv dbus udev \
       iproute2 iputils-ping netbase procps tzdata \
       libicu74 libssl3t64 zlib1g \
-      sudo \
+      sudo docker.io iptables \
  && rm -rf /var/lib/apt/lists/*
 
 # Actions runner. JIT configurations register the runner on first start, so no
@@ -36,11 +36,16 @@ COPY fcghact-guest /usr/local/bin/fcghact-guest
 COPY fcghact-guest.service /etc/systemd/system/fcghact-guest.service
 
 RUN chmod 0755 /usr/local/bin/fcghact-guest \
- && mkdir -p /etc/systemd/system/multi-user.target.wants /etc/systemd/journald.conf.d \
+ && mkdir -p /etc/systemd/system/multi-user.target.wants /etc/systemd/system/sockets.target.wants /etc/systemd/journald.conf.d /etc/docker \
  && ln -sf /etc/systemd/system/fcghact-guest.service /etc/systemd/system/multi-user.target.wants/fcghact-guest.service \
  && ln -sf /dev/null /etc/systemd/system/getty@tty1.service \
  && ln -sf /dev/null /etc/systemd/system/serial-getty@ttyS0.service \
  && printf '[Journal]\nStorage=volatile\nRuntimeMaxUse=64M\n' > /etc/systemd/journald.conf.d/99-fcghact.conf \
+ && printf '{"ip6tables": false}\n' > /etc/docker/daemon.json \
+ && ln -sf /lib/systemd/system/docker.service /etc/systemd/system/multi-user.target.wants/docker.service \
+ && ln -sf /lib/systemd/system/docker.socket /etc/systemd/system/sockets.target.wants/docker.socket \
+ && if [ -x /usr/sbin/iptables-legacy ]; then update-alternatives --set iptables /usr/sbin/iptables-legacy; fi \
+ && if [ -x /usr/sbin/ip6tables-legacy ]; then update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy; fi \
  && printf 'devpts /dev/pts devpts defaults 0 0\ntmpfs /dev/shm tmpfs defaults 0 0\n' > /etc/fstab \
  && truncate -s 0 /etc/machine-id \
  && : > /etc/hostname

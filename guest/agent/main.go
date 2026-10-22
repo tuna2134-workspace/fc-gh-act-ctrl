@@ -105,6 +105,7 @@ func run(cfg config) error {
 	if err := writeResolvConf(meta.DNS); err != nil {
 		log.Printf("write resolv.conf: %v", err)
 	}
+	waitForDocker(ctx)
 
 	log.Printf("starting runner %q for job %d (%s)", meta.RunnerName, meta.JobID, meta.Repository)
 	code, err := runRunner(cfg.runnerDir, meta)
@@ -113,6 +114,30 @@ func run(cfg config) error {
 	}
 	log.Printf("runner exited with code %d", code)
 	return nil
+}
+
+// waitForDocker waits until the Docker daemon answers, so container-based
+// jobs (docker build/push) do not race the daemon at startup. It is a no-op
+// when Docker is not installed.
+func waitForDocker(ctx context.Context) {
+	if _, err := os.Stat("/usr/bin/docker"); err != nil {
+		return
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		probe, cancel := context.WithTimeout(ctx, 5*time.Second)
+		err := exec.CommandContext(probe, "docker", "info").Run()
+		cancel()
+		if err == nil {
+			log.Printf("Docker is ready")
+			return
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			log.Printf("Docker is not ready: %v", err)
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 // runRunner executes the Actions runner in ephemeral JIT mode.
