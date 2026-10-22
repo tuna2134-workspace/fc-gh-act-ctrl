@@ -51,6 +51,21 @@ type Metadata struct {
 	IssuedAt   time.Time `json:"issued_at"`
 }
 
+// metadataEnvelope is the MMDS data store layout expected by guests. The
+// documented guest path /latest/meta-data/ resolves to latest.meta-data, so a
+// flat object would produce a 404.
+type metadataEnvelope struct {
+	Latest struct {
+		MetaData Metadata `json:"meta-data"`
+	} `json:"latest"`
+}
+
+func newMetadataEnvelope(meta Metadata) metadataEnvelope {
+	var env metadataEnvelope
+	env.Latest.MetaData = meta
+	return env
+}
+
 // Handle is a running microVM.
 type Handle interface {
 	ID() string

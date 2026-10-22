@@ -246,7 +246,8 @@ func (b *FirecrackerBackend) Start(ctx context.Context, spec Spec) (Handle, erro
 		DNS:        lease.DNS,
 		IssuedAt:   time.Now().UTC(),
 	}
-	machine.Handlers.FcInit = machine.Handlers.FcInit.Append(firecracker.NewSetMetadataHandler(meta))
+	machine.Handlers.FcInit = machine.Handlers.FcInit.Append(
+		firecracker.NewSetMetadataHandler(newMetadataEnvelope(meta)))
 
 	startCh := make(chan error, 1)
 	go func() { startCh <- machine.Start(vmCtx) }()
@@ -271,6 +272,22 @@ func (b *FirecrackerBackend) Start(ctx context.Context, spec Spec) (Handle, erro
 		_ = machine.StopVMM()
 		_ = killVMsBySocket(context.Background(), socketPath)
 		return fail(ctx.Err())
+	}
+
+	// Verify the data store before the guest boots. A flat object would make
+	// /latest/meta-data/ return 404 in the guest.
+	verifyCtx, cancelVerify := context.WithTimeout(vmCtx, 5*time.Second)
+	var stored metadataEnvelope
+	verifyErr := machine.GetMetadata(verifyCtx, &stored)
+	cancelVerify()
+	if verifyErr != nil || stored.Latest.MetaData.JobID != spec.JobID {
+		vmCancel()
+		_ = machine.StopVMM()
+		_ = killVMsBySocket(context.Background(), socketPath)
+		if verifyErr != nil {
+			return fail(fmt.Errorf("verify mmds metadata: %w", verifyErr))
+		}
+		return fail(fmt.Errorf("mmds metadata is missing job %d (got %d)", spec.JobID, stored.Latest.MetaData.JobID))
 	}
 
 	h := &machineHandle{

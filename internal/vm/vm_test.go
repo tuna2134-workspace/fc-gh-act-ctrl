@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -69,6 +70,28 @@ func TestStateFileRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, st.Tap, got.Tap)
 	assert.Equal(t, st.JobID, got.JobID)
+}
+
+func TestMetadataEnvelopeMatchesGuestPath(t *testing.T) {
+	env := newMetadataEnvelope(Metadata{
+		JobID:      42,
+		Repository: "owner/repo",
+		RunnerName: "runner",
+		JITConfig:  "encoded",
+	})
+	raw, err := json.Marshal(env)
+	require.NoError(t, err)
+
+	// The guest reads /latest/meta-data/, i.e. latest->meta-data.
+	var parsed struct {
+		Latest struct {
+			MetaData Metadata `json:"meta-data"`
+		} `json:"latest"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &parsed))
+	assert.Equal(t, int64(42), parsed.Latest.MetaData.JobID)
+	assert.Equal(t, "owner/repo", parsed.Latest.MetaData.Repository)
+	assert.Equal(t, "encoded", parsed.Latest.MetaData.JITConfig)
 }
 
 func TestSpecValidation(t *testing.T) {
