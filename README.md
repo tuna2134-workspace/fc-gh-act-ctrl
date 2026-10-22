@@ -17,6 +17,12 @@ GitHub Actions の self-hosted runner を **Firecracker microVM** 上で 1 ジ�
 - ゲストカーネル (`vmlinux`) と rootfs (`ext4`)
 - GitHub App
 
+ホストには次のパッケージが必要です (Debian/Ubuntu の例):
+
+```bash
+sudo apt-get install -y docker.io e2fsprogs iptables iproute2 curl
+```
+
 ## クイックスタート
 
 ```bash
@@ -61,7 +67,7 @@ sudo systemctl enable --now fcghact
    - Repository permissions: **Administration: Read and write** (repo スコープの JIT config 発行)
    - Organization permissions: **Self-hosted runners: Read and write** (org スコープを使う場合)
 2. Subscribe to events: **Workflow jobs** を有効にする。
-3. Webhook URL を `https://<host>/webhook`、Secret を設定する。
+3. Webhook URL を `https://<host>/webhook`、Secret を設定する。GitHub から到達できる必要があるため、必要ならリバースプロキシ (Caddy / nginx) で TLS 終端して公開する。
 4. 対象リポジトリ (または組織) に App をインストールする。
 5. Private key をダウンロードして `github.private_key_path` に置く。
 
@@ -126,6 +132,14 @@ images/rootfs        ゲスト rootfs の Dockerfile
 scripts              ホストセットアップ用スクリプト
 ```
 
+## セキュリティ
+
+- ジョブは microVM 内で root として動くが、ホストからは KVM で分離される。rootfs はジョブごとに COW コピーされ、終了時に削除される。
+- JIT config は MMDS 経由でのみゲストに渡し、ログや state ファイルには残さない。
+- Webhook は HMAC-SHA256 で検証する。`github.repositories` / `github.organizations` で対象を限定できる。
+- 現状は jailer を使わず root で Firecracker を起動する。ホストを専用にし、信頼できない同居プロセスを置かないこと。
+- ゲストの外向き通信は NAT で全開放される。必要なら `scripts/setup-host.sh` の iptables を絞るか、別途 egress 制御を入れる。
+
 ## メトリクス
 
 `/metrics` で Prometheus 形式で公開します。
@@ -151,6 +165,8 @@ scripts              ホストセットアップ用スクリプト
 - JIT ランナーは登録後にラベルが合致する任意の queued ジョブを取得できます。`fcghact` 専用ラベルと job ID 単位の claim で多重起動を抑止していますが、厳密な 1:1 割当が必要な場合は ARC の scale set プロトコル実装が必要です。
 - rootfs の reflink は btrfs / XFS (reflink=1) でのみ高速です。それ以外はフルコピーになります。
 - 1 ホスト 1 コントローラです (state dir の flock で二重起動を防ぎます)。
+- ゲストにはコンテナランタイムを入れていないため、Docker コンテナアクションやサービスコンテナは動きません。必要な場合は rootfs にランタイムを追加してください (ネスト仮想化は不可)。
+- コントローラ再起動中に届かなかった Webhook は失われます。再起動後に queued のままのジョブは手動で `fcghact run` するか、Webhook を再配信してください。
 - jailer / UFFD スナップショット / CNI は未実装です ([docs/design.md](docs/design.md#9-ロードマップ))。
 
 ## 開発

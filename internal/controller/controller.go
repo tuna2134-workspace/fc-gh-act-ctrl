@@ -141,6 +141,10 @@ func eventTarget(event *github.WorkflowJobEvent) (githubapp.Repo, string, int64)
 }
 
 func (c *Controller) handleQueued(job *github.WorkflowJob, repo githubapp.Repo, org string, installationID int64, log *slog.Logger) (string, error) {
+	if repo.Owner == "" || repo.Name == "" {
+		log.Debug("ignoring job without a repository")
+		return "ignored", nil
+	}
 	if !c.allowed(repo, org) {
 		log.Debug("ignoring job for a repository outside the allow list")
 		return "ignored", nil
@@ -212,9 +216,13 @@ func (c *Controller) handleCompleted(job *github.WorkflowJob, log *slog.Logger) 
 
 func (c *Controller) findSession(job *github.WorkflowJob) *session {
 	if name := job.GetRunnerName(); name != "" {
+		// When GitHub tells us which runner ran the job, only trust that
+		// mapping. Falling back to the job ID could stop a VM that picked up a
+		// different queued job.
 		if sess, ok := c.sessions.byRunnerName(name); ok {
 			return sess
 		}
+		return nil
 	}
 	if sess, ok := c.sessions.byJobID(job.GetID()); ok {
 		return sess

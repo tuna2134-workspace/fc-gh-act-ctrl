@@ -91,7 +91,8 @@ GitHub Actions の self-hosted runner を Firecracker microVM 上で 1 ジョブ
 | VM 起動失敗 | TAP/IP/ディスクを巻き戻し、claim を解放 |
 | ランナーがジョブを取らない (idle) | `registration_timeout` 超過で停止 |
 | ジョブが `job_timeout` を超過 | VM を強制停止 |
-| Webhook が届かない | 監視ループの job 状態ポーリングで完了を検知して停止 |
+| Webhook が届かない | 監視ループの job 状態ポーリングとコンソールのアイドル判定で停止 |
+| ランナーがジョブを取得できない | ジョブが queued のままなら最大 2 回まで内部で再キュー |
 | コントローラ再起動 | 起動時に state dir を走査し、残存 VMM/TAP を回収 (reap) |
 | 停止要求 | 全 VM に SIGTERM → 10 秒で SIGKILL、リソース解放 |
 
@@ -142,6 +143,8 @@ GitHub Actions の self-hosted runner を Firecracker microVM 上で 1 ジョブ
 - **Webhook レース**: JIT ランナーは登録後、ラベルが合致する任意の queued ジョブを取得し得る。
   そのため「特定の job ID のために起動した VM が別の job を実行する」可能性がある。
   対策として `fcghact` 専用ラベルを必須にし、job ID 単位の claim で多重起動を抑止する。
+  監視ループは job の runner ID が自分の VM と一致する場合だけ早期停止し、それ以外は
+  ゲストのコンソールログ (`Listening for Jobs` / `Running job:`) でアイドルを判定する。
   厳密な 1:1 割当が必要なら ARC の scale set プロトコル実装が必要 (ロードマップ)。
 - **同時実行数**: ホストのメモリと vCPU に依存する。`max_concurrent_jobs` で上限を設ける。
 - **rootfs コピー**: reflink 非対応 FS ではフルコピーになり起動が遅くなる。

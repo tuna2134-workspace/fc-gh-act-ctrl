@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -184,6 +185,15 @@ func (b *FirecrackerBackend) Start(ctx context.Context, spec Spec) (Handle, erro
 	cmd.Stdout = console
 	cmd.Stderr = console
 
+	machineCfg := models.MachineConfiguration{
+		VcpuCount:  firecracker.Int64(b.cfg.VCPUCount),
+		MemSizeMib: firecracker.Int64(b.cfg.MemSizeMiB),
+	}
+	if runtime.GOARCH == "amd64" {
+		// SMT is x86-only; sending it on aarch64 is rejected by Firecracker.
+		machineCfg.Smt = firecracker.Bool(false)
+	}
+
 	fcCfg := firecracker.Config{
 		SocketPath:      socketPath,
 		KernelImagePath: b.cfg.KernelImage,
@@ -194,11 +204,7 @@ func (b *FirecrackerBackend) Start(ctx context.Context, spec Spec) (Handle, erro
 			IsRootDevice: firecracker.Bool(true),
 			IsReadOnly:   firecracker.Bool(false),
 		}},
-		MachineCfg: models.MachineConfiguration{
-			VcpuCount:  firecracker.Int64(b.cfg.VCPUCount),
-			MemSizeMib: firecracker.Int64(b.cfg.MemSizeMiB),
-			Smt:        firecracker.Bool(false),
-		},
+		MachineCfg: machineCfg,
 		NetworkInterfaces: firecracker.NetworkInterfaces{{
 			StaticConfiguration: &firecracker.StaticNetworkConfiguration{
 				MacAddress:  mac,
@@ -291,7 +297,15 @@ func (b *FirecrackerBackend) Start(ctx context.Context, spec Spec) (Handle, erro
 
 	b.mu.Lock()
 	b.active[spec.ID] = h
+	closed := b.closed
 	b.mu.Unlock()
+
+	if closed {
+		// Shutdown raced with a slow boot; stop the VM we just created.
+		go func() { h.finish(machine.Wait(context.Background())) }()
+		_ = h.Stop(context.Background())
+		return nil, errors.New("vm: backend was shut down during boot")
+	}
 
 	b.log.Info("microvm started",
 		"vm", spec.ID,

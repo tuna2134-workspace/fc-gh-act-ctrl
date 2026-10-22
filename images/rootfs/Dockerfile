@@ -15,7 +15,7 @@ RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod 0755 /usr/sb
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates curl git jq tar gzip unzip xz-utils bzip2 \
-      systemd systemd-sysv dbus \
+      systemd systemd-sysv dbus udev \
       iproute2 iputils-ping netbase procps tzdata \
       libicu74 libssl3t64 zlib1g \
       sudo \
@@ -43,8 +43,6 @@ RUN chmod 0755 /usr/local/bin/fcghact-guest \
  && printf '[Journal]\nStorage=volatile\nRuntimeMaxUse=64M\n' > /etc/systemd/journald.conf.d/99-fcghact.conf \
  && printf 'devpts /dev/pts devpts defaults 0 0\ntmpfs /dev/shm tmpfs defaults 0 0\n' > /etc/fstab \
  && truncate -s 0 /etc/machine-id \
- && : > /etc/hostname \
- && rm -f /etc/resolv.conf \
- && : > /etc/resolv.conf
+ && : > /etc/hostname
 
 WORKDIR /root

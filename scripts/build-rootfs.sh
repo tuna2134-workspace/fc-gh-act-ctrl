@@ -20,6 +20,19 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
+case "${OUT_DIR}" in
+  "" | "/")
+    echo "refusing to use OUT_DIR=${OUT_DIR}" >&2
+    exit 1
+    ;;
+esac
+case "${ROOTFS_IMAGE}" in
+  "" | "/")
+    echo "refusing to write ROOTFS_IMAGE=${ROOTFS_IMAGE}" >&2
+    exit 1
+    ;;
+esac
+
 if [[ -z "${CONTAINER_RUNTIME}" ]]; then
   if command -v docker >/dev/null 2>&1; then
     CONTAINER_RUNTIME=docker
@@ -66,6 +79,10 @@ mkdir -p "${ROOTFS_DIR}"/{dev,proc,sys,run,tmp,etc}
 chmod 1777 "${ROOTFS_DIR}/tmp"
 : > "${ROOTFS_DIR}/etc/hostname"
 : > "${ROOTFS_DIR}/etc/resolv.conf"
+cat > "${ROOTFS_DIR}/etc/hosts" <<'EOF'
+127.0.0.1 localhost
+::1 localhost ip6-localhost ip6-loopback
+EOF
 
 echo "==> writing ${ROOTFS_IMAGE} (${ROOTFS_SIZE})"
 mkdir -p "$(dirname "${ROOTFS_IMAGE}")"

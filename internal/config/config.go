@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -137,6 +138,10 @@ type NetworkConfig struct {
 
 // Default returns the built-in configuration.
 func Default() *Config {
+	console := "ttyS0"
+	if runtime.GOARCH == "arm64" {
+		console = "ttyAMA0"
+	}
 	return &Config{
 		Server: ServerConfig{
 			Listen:          ":8080",
@@ -174,7 +179,7 @@ func Default() *Config {
 			StateDir:    "/var/lib/fcghact",
 			VCPUCount:   2,
 			MemSizeMiB:  2048,
-			BootArgs:    "console=ttyS0 reboot=k panic=1 pci=off net.ifnames=0 root=/dev/vda rw rootfstype=ext4",
+			BootArgs:    "console=" + console + " reboot=k panic=1 pci=off net.ifnames=0 root=/dev/vda rw rootfstype=ext4",
 			LogLevel:    "Warning",
 			Reflink:     true,
 		},

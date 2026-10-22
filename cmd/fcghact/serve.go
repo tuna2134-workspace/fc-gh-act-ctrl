@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -43,6 +44,13 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	checkCtx, cancelCheck := context.WithTimeout(ctx, 20*time.Second)
+	if slug, err := apiSvc.Check(checkCtx); err != nil {
+		log.Warn("github app authentication check failed", "error", err)
+	} else {
+		log.Info("github app authenticated", "slug", slug)
+	}
+	cancelCheck()
 
 	netMgr, err := network.New(cfg.Network)
 	if err != nil {

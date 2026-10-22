@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -75,6 +76,14 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	} else {
 		report("app private key", nil, "")
 	}
+
+	probe := filepath.Join(cfg.Firecracker.StateDir, ".doctor-probe")
+	err = os.MkdirAll(cfg.Firecracker.StateDir, 0o750)
+	if err == nil {
+		err = os.WriteFile(probe, []byte("ok"), 0o600)
+		_ = os.Remove(probe)
+	}
+	report("state directory", err, cfg.Firecracker.StateDir)
 
 	apiSvc, err := githubapp.New(cfg.GitHub)
 	if err != nil {

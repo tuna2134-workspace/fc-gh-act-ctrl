@@ -18,6 +18,7 @@ import (
 
 var (
 	runRepo  string
+	runOrg   string
 	runJobID int64
 )
 
@@ -30,6 +31,7 @@ func runCmd() *cobra.Command {
 		RunE: runJob,
 	}
 	cmd.Flags().StringVar(&runRepo, "repo", "", "repository in owner/name form")
+	cmd.Flags().StringVar(&runOrg, "org", "", "organization (required when github.scope is org)")
 	cmd.Flags().Int64Var(&runJobID, "job-id", 0, "workflow job ID")
 	_ = cmd.MarkFlagRequired("repo")
 	_ = cmd.MarkFlagRequired("job-id")
@@ -79,7 +81,7 @@ func runJob(cmd *cobra.Command, _ []string) error {
 		log.Warn("failed to reap leftover state", "error", err)
 	}
 
-	scope := githubapp.Scope{Repo: repo}
+	scope := githubapp.Scope{Repo: repo, Org: runOrg}
 	status, err := apiSvc.GetJobStatus(ctx, scope, runJobID)
 	if err != nil {
 		return err
@@ -125,10 +127,20 @@ func runJob(cmd *cobra.Command, _ []string) error {
 	done := make(chan error, 1)
 	go func() { done <- handle.Wait() }()
 
+	hardDeadline := time.NewTimer(cfg.Runner.BootTimeout.Duration() +
+		cfg.Runner.RegistrationTimeout.Duration() +
+		cfg.Runner.JobTimeout.Duration())
+	defer hardDeadline.Stop()
+
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
+		case <-hardDeadline.C:
+			fmt.Fprintln(cmd.OutOrStdout(), "maximum lifetime reached, stopping microvm")
+			shutdown()
+			<-done
+			return nil
 		case <-ctx.Done():
 			shutdown()
 			<-done

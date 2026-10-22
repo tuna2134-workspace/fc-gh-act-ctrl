@@ -47,14 +47,15 @@ func main() {
 	log.SetPrefix("fcghact-guest: ")
 
 	// Always power off, even when the runner fails: the host reaps the VM based
-	// on the Firecracker process exiting.
-	defer powerOff()
-
-	cfg := loadEnv()
-	if err := run(cfg); err != nil {
+	// on the Firecracker process exiting. os.Exit does not run defers, so the
+	// exit code is stored before shutting down.
+	code := 0
+	if err := run(loadEnv()); err != nil {
 		log.Printf("fatal: %v", err)
-		os.Exit(1)
+		code = 1
 	}
+	powerOff()
+	os.Exit(code)
 }
 
 type config struct {
@@ -120,7 +121,8 @@ func runRunner(dir string, meta *metadata) (int, error) {
 	if _, err := os.Stat(script); err != nil {
 		return 0, fmt.Errorf("runner script: %w", err)
 	}
-	args := []string{"--jitconfig", meta.JITConfig}
+	// --disableupdate keeps the ephemeral VM on the image's runner version.
+	args := []string{"--jitconfig", meta.JITConfig, "--disableupdate"}
 	cmd := exec.Command(script, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),

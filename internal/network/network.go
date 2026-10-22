@@ -134,7 +134,11 @@ func (m *Manager) Acquire() (*Lease, error) {
 	if err != nil {
 		return nil, err
 	}
-	tap := m.nextTapNameLocked()
+	tap, err := m.nextTapNameLocked()
+	if err != nil {
+		m.ipam.release(ip)
+		return nil, err
+	}
 	if err := m.createTapLocked(tap); err != nil {
 		m.ipam.release(ip)
 		return nil, err
@@ -162,17 +166,18 @@ func (m *Manager) DNS() []string {
 	return append([]string(nil), m.dns...)
 }
 
-func (m *Manager) nextTapNameLocked() string {
-	for {
+func (m *Manager) nextTapNameLocked() (string, error) {
+	for attempts := 0; attempts < 10000; attempts++ {
 		m.seq++
 		name := fmt.Sprintf("%s%d", m.tapPrefix, m.seq)
 		if len(name) > 15 {
 			name = name[:15]
 		}
 		if _, err := netlink.LinkByName(name); err != nil {
-			return name
+			return name, nil
 		}
 	}
+	return "", errors.New("network: could not find a free TAP device name")
 }
 
 func (m *Manager) createTapLocked(name string) error {
