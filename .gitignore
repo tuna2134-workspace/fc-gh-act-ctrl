@@ -1,0 +1,5 @@
+/bin/
+/.build/
+/.dev/
+*.ext4
+coverage.out

@@ -1,0 +1,64 @@
+server:
+  listen: "0.0.0.0:8080"
+  webhook_path: "/webhook"
+  health_path: "/healthz"
+  ready_path: "/readyz"
+  metrics_path: "/metrics"
+  read_timeout: 30s
+  write_timeout: 30s
+  shutdown_timeout: 30s
+
+log:
+  level: info
+  format: json
+
+github:
+  app_id: 123456
+  private_key_path: /etc/fcghact/app.pem
+  # Prefer webhook_secret_file so the secret is not stored in this file.
+  webhook_secret_file: /etc/fcghact/webhook_secret
+  # webhook_secret: "change-me"
+  base_url: https://api.github.com
+  # installation_id: 0    # resolved from the webhook payload when unset
+  scope: repo            # repo | org
+  repositories: []       # e.g. ["tuna2134-workspace/example"]; empty = every installation
+  organizations: []
+
+runner:
+  # Labels the JIT runner advertises. The runner automatically adds
+  # self-hosted/linux/x64, so only custom labels are sent to GitHub.
+  labels: ["self-hosted", "linux", "x64", "fcghact"]
+  # A job must carry all of these labels before the controller will run it.
+  require_labels: ["fcghact"]
+  runner_group_id: 1
+  work_folder: /opt/actions-runner/_work
+  name_prefix: fcghact
+  max_concurrent_jobs: 4
+  max_jobs_per_repo: 2
+  queue_size: 128
+  boot_timeout: 3m
+  registration_timeout: 5m
+  job_timeout: 60m
+  monitor_interval: 30s
+
+firecracker:
+  binary: /usr/local/bin/firecracker
+  kernel_image: /var/lib/fcghact/vmlinux
+  rootfs_image: /var/lib/fcghact/rootfs.ext4
+  state_dir: /var/lib/fcghact
+  vcpu_count: 2
+  mem_size_mib: 2048
+  boot_args: "console=ttyS0 reboot=k panic=1 pci=off net.ifnames=0 root=/dev/vda rw rootfstype=ext4"
+  log_level: Warning
+  # reflink uses FICLONE for instant copy-on-write rootfs clones. It falls back
+  # to a full copy on filesystems that do not support it.
+  reflink: true
+
+network:
+  manage_bridge: true
+  bridge: fcghact0
+  cidr: 172.31.0.0/16
+  gateway: 172.31.0.1
+  dns: ["1.1.1.1", "8.8.8.8"]
+  mtu: 1500
+  tap_prefix: fctap

@@ -1,0 +1,21 @@
+[Unit]
+Description=fcghact - GitHub Actions Firecracker runner controller
+Documentation=https://github.com/tuna2134-workspace/fc-gh-act-ctrl
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Loads FCGHACT_* environment overrides (for example the webhook secret).
+EnvironmentFile=-/etc/fcghact/env
+ExecStart=/usr/local/bin/fcghact serve --config /etc/fcghact/fcghact.yaml
+Restart=on-failure
+RestartSec=5s
+# Firecracker needs /dev/kvm and CAP_NET_ADMIN, so the controller runs as root.
+User=root
+LimitNOFILE=65536
+KillMode=control-group
+TimeoutStopSec=60s
+
+[Install]
+WantedBy=multi-user.target

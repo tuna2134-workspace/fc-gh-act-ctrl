@@ -1,0 +1,17 @@
+[Unit]
+Description=fcghact guest agent (GitHub Actions runner)
+After=local-fs.target
+# The kernel configures eth0 via ip= and MMDS works without DHCP.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/fcghact-guest
+TimeoutStartSec=infinity
+StandardOutput=journal+console
+StandardError=journal+console
+# Power the microVM off whenever the agent exits, including on failure, so the
+# host can reap the VM immediately.
+ExecStopPost=/sbin/poweroff -f
+
+[Install]
+WantedBy=multi-user.target
