@@ -26,8 +26,8 @@ github:
   organizations: []
 
 runner:
-  # Labels the JIT runner advertises. The runner automatically adds
-  # self-hosted/linux/x64, so only custom labels are sent to GitHub.
+  # Labels the JIT runner advertises. They are sent to generate-jitconfig
+  # as-is; GitHub does not add self-hosted/OS/arch automatically.
   labels: ["self-hosted", "linux", "x64", "fcghact"]
   # A job must carry all of these labels before the controller will run it.
   require_labels: ["fcghact"]

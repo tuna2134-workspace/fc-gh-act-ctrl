@@ -44,8 +44,11 @@ func TestMatchLabels(t *testing.T) {
 }
 
 func TestJITLabels(t *testing.T) {
-	assert.Equal(t, []string{"fcghact", "gpu"}, JITLabels([]string{"self-hosted", "Linux", "X64", "fcghact", "gpu"}))
-	assert.Equal(t, []string{"self-hosted"}, JITLabels([]string{"self-hosted"}))
+	assert.Equal(t,
+		[]string{"self-hosted", "Linux", "X64", "fcghact", "gpu"},
+		JITLabels([]string{"self-hosted", "Linux", "X64", "fcghact", "gpu"}))
+	// Duplicates are removed case-insensitively, but the first spelling wins.
+	assert.Equal(t, []string{"self-hosted", "FCGHACT"}, JITLabels([]string{"self-hosted", "FCGHACT", "fcghact"}))
 }
 
 func testConfig() *config.Config {
@@ -255,7 +258,7 @@ func TestControllerDispatchesAndStopsOnCompletion(t *testing.T) {
 
 	req := api.lastRequest()
 	api.setStatus(101, githubapp.JobStatus{Status: "in_progress"})
-	assert.Equal(t, []string{"fcghact"}, req.Labels)
+	assert.Equal(t, []string{"self-hosted", "linux", "x64", "fcghact"}, req.Labels)
 	assert.Equal(t, int64(1), req.RunnerGroupID)
 	assert.Contains(t, req.Name, "-j101-")
 

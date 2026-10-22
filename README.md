@@ -175,6 +175,8 @@ jobs:
 
 `runner.require_labels` (既定 `fcghact`) を必ず含めてください。これがないと、他の self-hosted ランナー向けのジョブを誤って取得する可能性があります。
 
+`runner.labels` は JIT config に **そのまま** 渡されます。GitHub は `self-hosted` や OS/arch を自動追加しないため、ジョブが要求するラベルをすべて含めてください（既定は `self-hosted,linux,x64,fcghact`）。
+
 ## コマンド
 
 | コマンド | 説明 |

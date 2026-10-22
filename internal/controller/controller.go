@@ -489,30 +489,23 @@ func (c *Controller) allowed(repo githubapp.Repo, org string) bool {
 	return false
 }
 
-// autoLabels are added to every self-hosted runner by the Actions runner
-// itself. Passing them to generate-jitconfig is unnecessary.
-var autoLabels = map[string]struct{}{
-	"self-hosted": {},
-	"linux":       {},
-	"x64":         {},
-	"arm64":       {},
-	"windows":     {},
-	"macos":       {},
-}
-
-// JITLabels strips the labels the runner adds automatically. GitHub requires at
-// least one custom label, so the input is returned unchanged when filtering
-// would leave nothing.
+// JITLabels normalises the labels sent to generate-jitconfig. The API does not
+// add default labels such as self-hosted or the OS/architecture; the caller
+// must include every label jobs are expected to request.
 func JITLabels(labels []string) []string {
+	seen := make(map[string]struct{}, len(labels))
 	out := make([]string, 0, len(labels))
 	for _, l := range labels {
-		if _, ok := autoLabels[strings.ToLower(strings.TrimSpace(l))]; ok {
+		l = strings.TrimSpace(l)
+		if l == "" {
 			continue
 		}
+		key := strings.ToLower(l)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
 		out = append(out, l)
-	}
-	if len(out) == 0 {
-		return append([]string(nil), labels...)
 	}
 	return out
 }

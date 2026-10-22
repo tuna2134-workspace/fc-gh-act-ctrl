@@ -3,3 +3,4 @@
 /.dev/
 *.ext4
 coverage.out
+/.tmp-*
