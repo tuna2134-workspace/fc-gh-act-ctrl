@@ -43,8 +43,11 @@ sudo ./scripts/build-rootfs.sh
 # 5. 設定
 sudo install -d /etc/fcghact
 sudo cp configs/fcghact.example.yaml /etc/fcghact/fcghact.yaml
-sudo install -m 600 app.pem /etc/fcghact/app.pem
-echo -n 'webhook-secret' | sudo tee /etc/fcghact/webhook_secret >/dev/null
+# GitHub App の設定画面からダウンロードした Private key を指定する
+sudo install -m 600 /path/to/<app-name>.private-key.pem /etc/fcghact/app.pem
+# Webhook secret は十分な長さの乱数を生成する
+openssl rand -hex 32 | sudo tee /etc/fcghact/webhook_secret >/dev/null
+# /etc/fcghact/fcghact.yaml の github.app_id を App の ID に変更する
 
 # 6. 事前チェック
 sudo bin/fcghact doctor --config /etc/fcghact/fcghact.yaml
@@ -69,7 +72,21 @@ sudo systemctl enable --now fcghact
 2. Subscribe to events: **Workflow jobs** を有効にする。
 3. Webhook URL を `https://<host>/webhook`、Secret を設定する。GitHub から到達できる必要があるため、必要ならリバースプロキシ (Caddy / nginx) で TLS 終端して公開する。
 4. 対象リポジトリ (または組織) に App をインストールする。
-5. Private key をダウンロードして `github.private_key_path` に置く。
+5. App の設定画面 → **Private keys** → **Generate a private key** で `.pem` をダウンロードする。
+   ホストへコピーして `github.private_key_path` に置く:
+
+   ```bash
+   # 例: ブラウザのダウンロード先からホストへ配置
+   sudo install -d /etc/fcghact
+   sudo install -m 600 ~/Downloads/<app-name>.private-key.pem /etc/fcghact/app.pem
+   sudo openssl pkey -in /etc/fcghact/app.pem -noout -check
+   ```
+
+   `app.pem` はリポジトリには含まれません。`fcghact doctor` で
+   `app private key` と `github app` が `ok` になることを確認してください。
+
+6. `configs/fcghact.example.yaml` の `github.app_id` を App の **App ID** に変更する
+   (プレースホルダの `123456` のままでは GitHub API が `404 Integration not found` を返します)。
 
 `github.scope` は既定の `repo` を推奨します。`org` にすると 1 つのランナーグループで組織内の複数リポジトリを扱えますが、App の組織権限が必要です。
 
@@ -202,6 +219,9 @@ scripts              ホストセットアップ用スクリプト
 - VM 実行中のコンソールログは `/var/lib/fcghact/vms/<vm-id>/console.log`、Firecracker のログは同ディレクトリの `firecracker.log` にある。VM 終了時に削除されるため、保存したい場合は `firecracker.keep_logs: true` を設定する (保存先は `<state_dir>/logs/<vm-id>/`)。
 - 異常終了後に残った VM は `fcghact cleanup` で回収する (起動時にも自動回収される)。
 - `permission denied` が出る場合は root で実行しているか、`/dev/kvm` のパーミッションを確認する。
+- `install: cannot stat 'app.pem'` が出る場合、`app.pem` はリポジトリに含まれない。GitHub App の
+  **Private keys** からダウンロードした実際の `.pem` のパスを `install` に渡す
+  (`sudo install -m 600 ~/Downloads/<app-name>.private-key.pem /etc/fcghact/app.pem`)。
 - Webhook が届いているかは `fcghact_webhooks_total` とログの `delivery` で確認する。
 - OCI の pull が `UNAUTHORIZED` になる場合は、root で `docker login ghcr.io` するか `rootfs.token_env` を設定する。`fcghact rootfs inspect` で参照と認証を切り分けられる。
 
