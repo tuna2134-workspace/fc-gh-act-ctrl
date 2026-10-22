@@ -101,12 +101,13 @@ func run(cfg config) error {
 		if err := syscall.Sethostname([]byte(meta.RunnerName)); err != nil {
 			log.Printf("set hostname: %v", err)
 		}
+		if err := ensureHostsEntry("/etc/hosts", meta.RunnerName); err != nil {
+			log.Printf("update /etc/hosts: %v", err)
+		}
 	}
 	if err := writeResolvConf(meta.DNS); err != nil {
 		log.Printf("write resolv.conf: %v", err)
 	}
-	waitForDocker(ctx)
-
 	log.Printf("starting runner %q for job %d (%s)", meta.RunnerName, meta.JobID, meta.Repository)
 	code, err := runRunner(cfg.runnerDir, meta)
 	if err != nil {
@@ -114,30 +115,6 @@ func run(cfg config) error {
 	}
 	log.Printf("runner exited with code %d", code)
 	return nil
-}
-
-// waitForDocker waits until the Docker daemon answers, so container-based
-// jobs (docker build/push) do not race the daemon at startup. It is a no-op
-// when Docker is not installed.
-func waitForDocker(ctx context.Context) {
-	if _, err := os.Stat("/usr/bin/docker"); err != nil {
-		return
-	}
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		probe, cancel := context.WithTimeout(ctx, 5*time.Second)
-		err := exec.CommandContext(probe, "docker", "info").Run()
-		cancel()
-		if err == nil {
-			log.Printf("Docker is ready")
-			return
-		}
-		if time.Now().After(deadline) || ctx.Err() != nil {
-			log.Printf("Docker is not ready: %v", err)
-			return
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
 }
 
 // runRunner executes the Actions runner in ephemeral JIT mode.
@@ -171,6 +148,32 @@ func runRunner(dir string, meta *metadata) (int, error) {
 		return exitErr.ExitCode(), nil
 	}
 	return 1, err
+}
+
+// ensureHostsEntry adds 127.0.1.1 <hostname> so sudo and other tools can
+// resolve the runner hostname without waiting on DNS.
+func ensureHostsEntry(path, hostname string) error {
+	if hostname == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		for _, field := range strings.Fields(line) {
+			if field == hostname {
+				return nil
+			}
+		}
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = fmt.Fprintf(f, "127.0.1.1 %s\n", hostname)
+	return err
 }
 
 func writeResolvConf(dns []string) error {

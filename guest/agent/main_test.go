@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -71,6 +72,22 @@ func TestMMDSClientTimesOut(t *testing.T) {
 	defer cancel()
 	_, err := newMMDSClient(srv.URL).waitForMetadata(ctx)
 	require.Error(t, err)
+}
+
+func TestEnsureHostsEntry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts")
+	require.NoError(t, os.WriteFile(path, []byte("127.0.0.1 localhost\n"), 0o644))
+
+	require.NoError(t, ensureHostsEntry(path, "runner-1"))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(string(data), "runner-1"))
+
+	// A second call must not duplicate the entry.
+	require.NoError(t, ensureHostsEntry(path, "runner-1"))
+	data, err = os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(string(data), "runner-1"))
 }
 
 func TestWriteResolvConfTo(t *testing.T) {

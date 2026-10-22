@@ -1,6 +1,6 @@
 [Unit]
 Description=fcghact guest agent (GitHub Actions runner)
-After=local-fs.target docker.service
+After=local-fs.target
 # The kernel configures eth0 via ip= and MMDS works without DHCP.
 
 [Service]

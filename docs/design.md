@@ -14,7 +14,7 @@ GitHub Actions の self-hosted runner を Firecracker microVM 上で 1 ジョブ
 - Actions Runner Controller (ARC) の scale set gRPC プロトコル互換。
 - Kubernetes 上での動作 (CRD / operator)。
 - マルチホストのスケジューリング。1 プロセス = 1 ホスト。
-- ゲストイメージの OCI 配布。rootfs はホスト上のファイルを COW コピーする。
+- ゲストイメージの OCI 配布 (v0.2 で実装済み。8 章を参照)。
 
 ## 2. 全体構成
 

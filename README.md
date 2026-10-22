@@ -39,7 +39,8 @@ sudo ./scripts/setup-host.sh
 
 # 4. rootfs のビルド (Docker が必要)
 #    runner のバージョンは既定で 2.338.1。必要なら RUNNER_VERSION で上書きする
-sudo ./scripts/build-rootfs.sh
+#    Docker でビルドするジョブを動かす場合は rootfs を大きめにする (例: 8G)
+sudo ROOTFS_SIZE=8G ./scripts/build-rootfs.sh
 
 # 5. 設定
 sudo install -d /etc/fcghact
@@ -311,7 +312,11 @@ scripts              ホストセットアップ用スクリプト
 - JIT ランナーは登録後にラベルが合致する任意の queued ジョブを取得できます。`fcghact` 専用ラベルと job ID 単位の claim で多重起動を抑止していますが、厳密な 1:1 割当が必要な場合は ARC の scale set プロトコル実装が必要です。
 - rootfs の reflink は btrfs / XFS (reflink=1) でのみ高速です。それ以外はフルコピーになります。
 - 1 ホスト 1 コントローラです (state dir の flock で二重起動を防ぎます)。
-- ゲストにはコンテナランタイムを入れていないため、Docker コンテナアクションやサービスコンテナは動きません。必要な場合は rootfs にランタイムを追加してください (ネスト仮想化は不可)。
+- ゲストには Docker を同梱していません。Docker コンテナアクションや `docker build` を使う場合は、`docker/setup-docker-action` などでジョブ中に Docker をセットアップしてください。
+  - そのために `iptables` を同梱し、カーネルが `nf_tables` 非対応のため `iptables-legacy` を選択しています。
+  - Docker のデータは rootfs 上に置かれるため、`ROOTFS_SIZE` を大きめにしてください (例: 8G)。ビルドには `firecracker.vcpu_count: 4`, `firecracker.mem_size_mib: 4096` 程度を推奨します。
+  - `reflink` 非対応のファイルシステムでも、`SEEK_DATA`/`SEEK_HOLE` で割り当て済み領域だけをコピーします (sparse 対応)。XFS (reflink=1) や btrfs ならさらに高速です。
+- Docker のネスト仮想化 (VM 内でさらに KVM を使う) はできません。
 - GitHub は古い Actions runner を拒否します (`Runner version ... is deprecated and cannot receive messages`)。rootfs の `RUNNER_VERSION` (既定 2.338.1) は定期的に更新してください。最新版は [actions/runner releases](https://github.com/actions/runner/releases) で確認できます。
 - コントローラ再起動中に届かなかった Webhook は失われます。再起動後に queued のままのジョブは手動で `fcghact run` するか、Webhook を再配信してください。
 - jailer / UFFD スナップショット / CNI は未実装です ([docs/design.md](docs/design.md#10-ロードマップ))。

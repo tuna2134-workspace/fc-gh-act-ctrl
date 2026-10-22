@@ -44,6 +44,35 @@ func TestCloneFileReflinkOrFallback(t *testing.T) {
 	assert.Equal(t, content, got)
 }
 
+func TestCloneFileSparse(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.ext4")
+	f, err := os.Create(src)
+	require.NoError(t, err)
+	require.NoError(t, f.Truncate(1<<20))
+	_, err = f.WriteAt([]byte("start"), 0)
+	require.NoError(t, err)
+	_, err = f.WriteAt([]byte("middle"), 512<<10)
+	require.NoError(t, err)
+	_, err = f.WriteAt([]byte("end"), (1<<20)-3)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	dst := filepath.Join(dir, "dst.ext4")
+	_, err = cloneFile(src, dst, false)
+	require.NoError(t, err)
+
+	info, err := os.Stat(dst)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1<<20), info.Size())
+
+	want, err := os.ReadFile(src)
+	require.NoError(t, err)
+	got, err := os.ReadFile(dst)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}
+
 func TestCloneFileFailsWhenDestinationExists(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")
