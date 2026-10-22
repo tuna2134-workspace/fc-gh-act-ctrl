@@ -2,7 +2,7 @@ name: rootfs
 
 on:
   push:
-    branches: ["main"]
+    branches: ["master"]
     paths:
       - "images/rootfs/**"
       - "guest/agent/**"
@@ -57,7 +57,7 @@ jobs:
             --source "${SOURCE}" \
             --version "${sha}"
 
-          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+          if [[ "${GITHUB_REF}" == "refs/heads/master" ]]; then
             bin/fcghact rootfs push \
               --file /var/lib/fcghact/rootfs.ext4 \
               --ref "${image}:latest" \
