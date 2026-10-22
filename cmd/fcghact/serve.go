@@ -87,7 +87,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 	serveErr := make(chan error, 1)
 	go func() {
-		log.Info("http server listening", "addr", cfg.Server.Listen)
+		log.Info("http server listening", "addr", cfg.Server.Listen, "webhook_path", cfg.Server.WebhookPath)
 		serveErr <- srv.ListenAndServe()
 	}()
 

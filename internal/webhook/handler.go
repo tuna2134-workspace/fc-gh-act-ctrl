@@ -51,6 +51,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	eventType := github.WebHookType(r)
 	deliveryID := github.DeliveryID(r)
+	// Log every authenticated delivery, including ping and other events, so
+	// setup problems can be told apart from a silent network path.
+	h.log.Info("webhook received", "event", eventType, "delivery", deliveryID)
 	if eventType != "workflow_job" {
 		w.WriteHeader(http.StatusNoContent)
 		return

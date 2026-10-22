@@ -262,6 +262,47 @@ scripts              ホストセットアップ用スクリプト
 - Webhook が届いているかは `fcghact_webhooks_total` とログの `delivery` で確認する。
 - OCI の pull が `UNAUTHORIZED` になる場合は、root で `docker login ghcr.io` するか `rootfs.token_env` を設定する。`fcghact rootfs inspect` で参照と認証を切り分けられる。
 
+## Webhook が届かないとき
+
+`app.pem` の配置だけではイベントは発生しません。次の順で確認してください。
+
+1. **GitHub App → Advanced → Recent Deliveries** を開く。
+   - 何もない: Webhook URL が未設定、App がリポジトリに未インストール、または GitHub から到達できていない。
+   - 4xx/5xx がある: ステータスとレスポンス本文を確認する（401 は Secret 不一致、404 はパス違いなど）。
+2. App の **Webhook URL** が `https://<host>/webhook` になっているか、**Active** が有効かを確認する。
+3. **Subscribe to events → Workflow jobs** が有効か確認する。
+4. App が対象リポジトリにインストールされているか確認する（Repository settings → GitHub Apps）。
+5. 外部から到達できるか確認する:
+
+   ```bash
+   # 署名なしの POST は 401 が正常。401 ならサーバーまで届いている。
+   curl -i -X POST https://<host>/webhook -H 'X-GitHub-Event: ping' -d '{}'
+
+   # GET は 405 (Method Not Allowed) が返れば到達している
+   curl -i https://<host>/webhook
+   ```
+
+   - 404: リバースプロキシのパス設定が違う
+   - timeout / connection refused: ファイアウォール、TLS、`server.listen`、プロキシを確認
+6. コントローラのログに `webhook received` が出るか確認する。
+
+   ```
+   # 手動起動の場合
+   sudo bin/fcghact serve -c /etc/fcghact/fcghact.yaml
+
+   # systemd の場合
+   sudo journalctl -u fcghact -f
+   ```
+
+   `event=ping` が届けば経路は正常です。`event=workflow_job` が来ない場合は、
+   ワークフローが実際に実行されているか、`runs-on` が self-hosted 向けかを確認する。
+7. `workflow_job` は **self-hosted ランナーを参照するジョブ**が対象です。
+   例: `runs-on: [self-hosted, fcghact]`。`ubuntu-latest` では発生しません。
+8. `server.listen` を `127.0.0.1:8080` にしたままプロキシを設定していない、という状態がないか確認する。
+9. Webhook Secret は GitHub 側の値と `/etc/fcghact/webhook_secret` の内容を完全一致させる
+   (末尾の改行は読み込み時に除去されます)。
+10. Cloudflare などの WAF が POST を遮断していないか、GitHub の IP 制限をしていないか確認する。
+
 ## 既知の制約
 
 - JIT ランナーは登録後にラベルが合致する任意の queued ジョブを取得できます。`fcghact` 専用ラベルと job ID 単位の claim で多重起動を抑止していますが、厳密な 1:1 割当が必要な場合は ARC の scale set プロトコル実装が必要です。
