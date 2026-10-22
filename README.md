@@ -73,6 +73,42 @@ sudo systemctl enable --now fcghact
 
 `github.scope` は既定の `repo` を推奨します。`org` にすると 1 つのランナーグループで組織内の複数リポジトリを扱えますが、App の組織権限が必要です。
 
+## rootfs の OCI 配布
+
+rootfs は OCI イメージとして GHCR などに置けます。イメージは `rootfs.ext4` を 1 つ含む tar+gzip レイヤです。
+
+```yaml
+rootfs:
+  # 起動時にこの参照を解決し、キャッシュした ext4 を使う
+  oci_reference: ghcr.io/tuna2134-workspace/fcghact-rootfs:v1
+  # 省略時は <firecracker.state_dir>/images
+  cache_dir: /var/lib/fcghact/images
+  # 省略時は docker login の資格情報 (root の場合は /root/.docker/config.json)
+  token_env: GHCR_TOKEN
+  prune: true
+```
+
+`rootfs.oci_reference` を設定すると、`firecracker.rootfs_image` はキャッシュされたファイルに置き換えられます。キャッシュは `<cache_dir>/sha256-<layer-digest>/rootfs.ext4` に置かれ、レイヤのダイジェストを検証してから atomic に rename します。
+
+手動での操作:
+
+```bash
+# ビルドして push
+sudo ./scripts/build-rootfs.sh
+bin/fcghact rootfs push --file /var/lib/fcghact/rootfs.ext4 \
+  --ref ghcr.io/OWNER/fcghact-rootfs:v1
+
+# pull / 確認
+bin/fcghact rootfs pull --ref ghcr.io/OWNER/fcghact-rootfs:v1
+bin/fcghact rootfs inspect --ref ghcr.io/OWNER/fcghact-rootfs:v1
+```
+
+`ROOTFS_PUSH_REF=ghcr.io/OWNER/fcghact-rootfs:v1 sudo -E ./scripts/build-rootfs.sh` のようにすると、rootfs のビルドと push をまとめて実行できます。
+
+[.github/workflows/rootfs.yml](.github/workflows/rootfs.yml) は `images/rootfs/**` や `guest/agent/**` の変更、または `rootfs-*` タグで rootfs をビルドし、GHCR に `12 桁 SHA` / `latest` / タグ名で push します (GHCR のパッケージ書き込み権限を使用)。
+
+本番ではタグではなく **ダイジェスト固定** (`ghcr.io/...@sha256:...`) を推奨します。pull 時に image manifest とレイヤのダイジェストを検証します。
+
 ## ワークフロー側
 
 ```yaml
@@ -93,6 +129,9 @@ jobs:
 | `fcghact serve` | Webhook サーバとコントローラを起動 (既定) |
 | `fcghact run --repo owner/name --job-id 123` | queued ジョブを 1 つ手動で実行 (デバッグ用) |
 | `fcghact cleanup` | 残存 VM / TAP / state を回収 |
+| `fcghact rootfs pull` | OCI イメージから rootfs を取得 (キャッシュ) |
+| `fcghact rootfs push` | ext4 rootfs を OCI イメージとして push |
+| `fcghact rootfs inspect` | マニフェストを解決して digest / キャッシュ状態を表示 |
 | `fcghact doctor` | KVM・イメージ・bridge・GitHub 認証をチェック |
 | `fcghact version` | バージョン表示 |
 
@@ -114,6 +153,10 @@ jobs:
 | `firecracker.mem_size_mib` | `2048` | VM あたりのメモリ |
 | `firecracker.reflink` | `true` | rootfs を COW コピーする |
 | `network.cidr` | `172.31.0.0/16` | ゲスト用サブネット |
+| `rootfs.oci_reference` | 空 | rootfs を取得する OCI 参照。空なら `firecracker.rootfs_image` を使用 |
+| `rootfs.cache_dir` | `<state_dir>/images` | rootfs のレイヤキャッシュ |
+| `rootfs.token_env` | 空 | レジストリトークンを読む環境変数名 |
+| `rootfs.prune` | `true` | 使用中以外のキャッシュレイヤを削除 |
 
 環境変数は `FCGHACT_` プレフィックスで上書きできます (例: `FCGHACT_SERVER_LISTEN`, `FCGHACT_GITHUB_WEBHOOK_SECRET`)。
 
@@ -127,6 +170,7 @@ internal/webhook     HMAC 検証と workflow_job のパース
 internal/controller  ラベル照合・スケジューリング・監視
 internal/vm          Firecracker 起動・rootfs COW・MMDS・孤児回収
 internal/network     bridge / TAP / IPAM
+internal/oci         rootfs の OCI push / pull / inspect
 guest/agent          VM 内エージェント (MMDS → runner)
 images/rootfs        ゲスト rootfs の Dockerfile
 scripts              ホストセットアップ用スクリプト
@@ -159,6 +203,7 @@ scripts              ホストセットアップ用スクリプト
 - 異常終了後に残った VM は `fcghact cleanup` で回収する (起動時にも自動回収される)。
 - `permission denied` が出る場合は root で実行しているか、`/dev/kvm` のパーミッションを確認する。
 - Webhook が届いているかは `fcghact_webhooks_total` とログの `delivery` で確認する。
+- OCI の pull が `UNAUTHORIZED` になる場合は、root で `docker login ghcr.io` するか `rootfs.token_env` を設定する。`fcghact rootfs inspect` で参照と認証を切り分けられる。
 
 ## 既知の制約
 
@@ -167,7 +212,7 @@ scripts              ホストセットアップ用スクリプト
 - 1 ホスト 1 コントローラです (state dir の flock で二重起動を防ぎます)。
 - ゲストにはコンテナランタイムを入れていないため、Docker コンテナアクションやサービスコンテナは動きません。必要な場合は rootfs にランタイムを追加してください (ネスト仮想化は不可)。
 - コントローラ再起動中に届かなかった Webhook は失われます。再起動後に queued のままのジョブは手動で `fcghact run` するか、Webhook を再配信してください。
-- jailer / UFFD スナップショット / CNI は未実装です ([docs/design.md](docs/design.md#9-ロードマップ))。
+- jailer / UFFD スナップショット / CNI は未実装です ([docs/design.md](docs/design.md#10-ロードマップ))。
 
 ## 開発
 

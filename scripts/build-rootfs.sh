@@ -50,9 +50,13 @@ ROOTFS_DIR="${OUT_DIR}/rootfs-root"
 rm -rf "${CONTEXT}" "${ROOTFS_DIR}"
 mkdir -p "${CONTEXT}" "${ROOTFS_DIR}"
 
-echo "==> building guest agent"
-CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" \
-  go build -trimpath -ldflags "-s -w" -o "${CONTEXT}/fcghact-guest" "${ROOT_DIR}/guest/agent"
+echo "==> preparing guest agent"
+if [[ -n "${GUEST_AGENT_BINARY:-}" ]]; then
+  install -m 0755 "${GUEST_AGENT_BINARY}" "${CONTEXT}/fcghact-guest"
+else
+  CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" \
+    go build -trimpath -ldflags "-s -w" -o "${CONTEXT}/fcghact-guest" "${ROOT_DIR}/guest/agent"
+fi
 
 cp "${ROOT_DIR}/images/rootfs/Dockerfile" "${CONTEXT}/Dockerfile"
 cp "${ROOT_DIR}/images/rootfs/fcghact-guest.service" "${CONTEXT}/fcghact-guest.service"
@@ -91,4 +95,19 @@ mkfs.ext4 -q -F -L fcghact-rootfs -d "${ROOTFS_DIR}" "${ROOTFS_IMAGE}" "${ROOTFS
 
 echo
 echo "rootfs written to ${ROOTFS_IMAGE}"
+
+if [[ -n "${ROOTFS_PUSH_REF:-}" ]]; then
+  FCGHACT_BIN="${FCGHACT_BIN:-${ROOT_DIR}/bin/fcghact}"
+  if [[ ! -x "${FCGHACT_BIN}" ]]; then
+    echo "ROOTFS_PUSH_REF is set but ${FCGHACT_BIN} does not exist; run 'make build' first" >&2
+    exit 1
+  fi
+  push_args=(--file "${ROOTFS_IMAGE}" --ref "${ROOTFS_PUSH_REF}")
+  [[ -n "${ROOTFS_PUSH_TOKEN_ENV:-}" ]] && push_args+=(--token-env "${ROOTFS_PUSH_TOKEN_ENV}")
+  [[ -n "${ROOTFS_PUSH_TOKEN:-}" ]] && push_args+=(--token "${ROOTFS_PUSH_TOKEN}")
+  [[ -n "${ROOTFS_PUSH_INSECURE:-}" ]] && push_args+=(--insecure)
+  echo "==> pushing rootfs to ${ROOTFS_PUSH_REF}"
+  "${FCGHACT_BIN}" rootfs push "${push_args[@]}"
+fi
+
 echo "verify with: sudo bin/fcghact doctor --config /etc/fcghact/fcghact.yaml"

@@ -2,9 +2,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -35,6 +38,7 @@ func main() {
 		serveCmd(),
 		runCmd(),
 		cleanupCmd(),
+		rootfsCmd(),
 		doctorCmd(),
 		versionCmd(),
 	)
@@ -61,6 +65,11 @@ func versionCmd() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "fcghact %s (commit %s, built %s)\n", version, commit, date)
 		},
 	}
+}
+
+// commandContext returns a context cancelled by the usual termination signals.
+func commandContext(cmd *cobra.Command) (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 }
 
 func loadConfigAndLogger() (*config.Config, *slog.Logger, error) {

@@ -120,6 +120,38 @@ func TestWebhookSecretAndPrivateKeyResolution(t *testing.T) {
 	assert.Equal(t, "line1\nline2", string(key))
 }
 
+func TestLoadPartialSkipsValidation(t *testing.T) {
+	cfg, err := LoadPartial("")
+	require.NoError(t, err)
+	assert.Equal(t, "/var/lib/fcghact/rootfs.ext4", cfg.Firecracker.RootfsImage)
+	assert.True(t, cfg.Rootfs.Prune)
+	assert.Equal(t, "info", cfg.Log.Level)
+}
+
+func TestRootfsOCIConfig(t *testing.T) {
+	t.Setenv("FCGHACT_ROOTFS_OCI_REFERENCE", "ghcr.io/owner/fcghact-rootfs:v1")
+	t.Setenv("FCGHACT_ROOTFS_PRUNE", "false")
+	t.Setenv("FCGHACT_ROOTFS_TOKEN_ENV", "GHCR_TOKEN")
+	cfg, err := LoadPartial("")
+	require.NoError(t, err)
+	assert.Equal(t, "ghcr.io/owner/fcghact-rootfs:v1", cfg.Rootfs.OCIReference)
+	assert.False(t, cfg.Rootfs.Prune)
+	assert.Equal(t, "GHCR_TOKEN", cfg.Rootfs.TokenEnv)
+}
+
+func TestValidateAllowsOCIWithoutLocalRootfs(t *testing.T) {
+	cfg := Default()
+	cfg.GitHub.AppID = 1
+	cfg.GitHub.PrivateKeyPath = "/tmp/key.pem"
+	cfg.GitHub.WebhookSecret = "secret"
+	cfg.Firecracker.RootfsImage = ""
+	cfg.Rootfs.OCIReference = "ghcr.io/owner/fcghact-rootfs:v1"
+	require.NoError(t, cfg.Validate())
+
+	cfg.Rootfs.OCIReference = ""
+	require.ErrorContains(t, cfg.Validate(), "rootfs_image")
+}
+
 func TestDurationText(t *testing.T) {
 	var d Duration
 	require.NoError(t, d.UnmarshalText([]byte("90s")))

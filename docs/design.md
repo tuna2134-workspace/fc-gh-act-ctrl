@@ -108,6 +108,7 @@ GitHub Actions の self-hosted runner を Firecracker microVM 上で 1 ジョブ
 | HTTP | `github.com/go-chi/chi/v5` | 軽量ルータ。middleware (recover, request id, timeout) を再利用 |
 | メトリクス | `github.com/prometheus/client_golang` | VM 数・起動時間・ジョブ結果の可観測性 |
 | ネットワーク | `github.com/vishvananda/netlink` | bridge / TAP の作成・削除を netlink で行う |
+| OCI 配布 | `github.com/google/go-containerregistry` | rootfs の OCI push / pull、認証、ダイジェスト検証。crane/docker CLI に依存しない |
 | リトライ | `github.com/cenkalti/backoff/v4` | GitHub API の 429/5xx に対する指数バックオフ |
 | 並行制御 | `golang.org/x/sync` | errgroup による監視ループの並列化 |
 | テスト | `github.com/stretchr/testify` | アサーションとモック |
@@ -151,15 +152,30 @@ GitHub Actions の self-hosted runner を Firecracker microVM 上で 1 ジョブ
 - **Webhook の再送**: GitHub は失敗した配信を自動再送しない。キュー溢れ時は 503 を返し、
   手動再配信または `fcghact run` で復旧する。
 
-## 8. 設定例
+## 8. rootfs の OCI 配布
+
+ゲスト rootfs は単一レイヤの OCI イメージとして配布する。
+
+- レイヤ: tar+gzip に `rootfs.ext4` を 1 エントリだけ格納 (`application/vnd.oci.image.layer.v1.tar+gzip`)。
+- push: ext4 を tar 化して `tarball.LayerFromFile` に渡し、`empty.Image` に append して
+  `remote.Write` する。annotations に source / version / created を付ける。
+- pull: `remote.Image` でマニフェストを解決し、`<cache_dir>/sha256-<layer-digest>/rootfs.ext4`
+  に展開する。展開前にレイヤの圧縮ダイジェストを SHA-256 で検証する。
+- 同時 pull は `<layer-digest>.lock` の flock で排他し、一時ファイル + rename で atomic に置く。
+- 認証は Docker keychain を既定とし、`rootfs.token` / `rootfs.token_env` で Bearer トークンを
+  指定できる (root で動くデーモンは `/root/.docker/config.json` を参照)。
+- `rootfs.prune` で使用中以外のキャッシュを削除する。
+- CI (`.github/workflows/rootfs.yml`) が rootfs をビルドして GHCR に push する。
+
+## 9. 設定例
 
 `configs/fcghact.example.yaml` を参照。
 
-## 9. ロードマップ
+## 10. ロードマップ
 
 1. warm pool: 起動済み VM を MMDS ポーリングで待機させ、割当時の起動遅延をなくす。
 2. Firecracker snapshot + UFFD によるミリ秒起動。
 3. jailer 統合と専用ユーザ実行。
 4. CNI によるネットワーク分離。
 5. ARC scale set プロトコル対応。
-6. rootfs の OCI イメージ配布 (`go-containerregistry`)。
+6. OCI イメージのイメージ署名 (cosign) と digest pin の強制。

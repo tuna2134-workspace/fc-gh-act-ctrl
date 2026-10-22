@@ -36,6 +36,10 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	}
 	defer func() { _ = release() }()
 
+	if err := prepareRootfs(ctx, cfg, log); err != nil {
+		return err
+	}
+
 	secret, err := cfg.GitHub.WebhookSecretBytes()
 	if err != nil {
 		return err

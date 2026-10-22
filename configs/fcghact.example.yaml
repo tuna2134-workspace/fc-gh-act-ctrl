@@ -56,6 +56,19 @@ firecracker:
   # Copy console.log / firecracker.log to <state_dir>/logs/<vm-id>/ on exit.
   keep_logs: false
 
+rootfs:
+  # When set, the guest rootfs is pulled from an OCI registry at startup and
+  # firecracker.rootfs_image is replaced by the cached extraction.
+  # e.g. ghcr.io/tuna2134-workspace/fcghact-rootfs:v1
+  oci_reference: ""
+  # Defaults to <firecracker.state_dir>/images.
+  cache_dir: ""
+  # Prefer token_env so the token is not stored in this file.
+  token: ""
+  token_env: ""        # e.g. GHCR_TOKEN
+  insecure: false      # allow plain HTTP registries (testing only)
+  prune: true          # remove cached layers other than the active one
+
 network:
   manage_bridge: true
   bridge: fcghact0

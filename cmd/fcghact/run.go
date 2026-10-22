@@ -57,6 +57,10 @@ func runJob(cmd *cobra.Command, _ []string) error {
 	}
 	defer func() { _ = release() }()
 
+	if err := prepareRootfs(ctx, cfg, log); err != nil {
+		return err
+	}
+
 	apiSvc, err := githubapp.New(cfg.GitHub)
 	if err != nil {
 		return err

@@ -57,6 +57,24 @@ type Config struct {
 	Runner      RunnerConfig      `yaml:"runner"`
 	Firecracker FirecrackerConfig `yaml:"firecracker"`
 	Network     NetworkConfig     `yaml:"network"`
+	Rootfs      RootfsConfig      `yaml:"rootfs"`
+}
+
+// RootfsConfig controls optional OCI distribution of the guest rootfs image.
+// When OCIReference is set the controller resolves it at startup, caches the
+// layer locally and uses the extracted ext4 file instead of
+// firecracker.rootfs_image.
+type RootfsConfig struct {
+	OCIReference string `yaml:"oci_reference" env:"ROOTFS_OCI_REFERENCE"`
+	// CacheDir defaults to <firecracker.state_dir>/images.
+	CacheDir string `yaml:"cache_dir" env:"ROOTFS_CACHE_DIR"`
+	// Token is a registry bearer token. Prefer TokenEnv to avoid storing it in
+	// the configuration file.
+	Token    string `yaml:"token" env:"ROOTFS_TOKEN"`
+	TokenEnv string `yaml:"token_env" env:"ROOTFS_TOKEN_ENV"`
+	Insecure bool   `yaml:"insecure" env:"ROOTFS_INSECURE"`
+	// Prune removes cached layers other than the one currently in use.
+	Prune bool `yaml:"prune" env:"ROOTFS_PRUNE"`
 }
 
 // ServerConfig controls the HTTP server.
@@ -183,6 +201,9 @@ func Default() *Config {
 			LogLevel:    "Warning",
 			Reflink:     true,
 		},
+		Rootfs: RootfsConfig{
+			Prune: true,
+		},
 		Network: NetworkConfig{
 			ManageBridge: true,
 			Bridge:       "fcghact0",
@@ -198,6 +219,20 @@ func Default() *Config {
 // Load reads the configuration from path (optional), applies environment
 // overrides, then validates the result.
 func Load(path string) (*Config, error) {
+	cfg, err := LoadPartial(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// LoadPartial is like Load but skips validation. It is used by commands that
+// only need a subset of the configuration (for example `fcghact rootfs push`,
+// which does not need GitHub App credentials).
+func LoadPartial(path string) (*Config, error) {
 	cfg := Default()
 	if path != "" {
 		raw, err := os.ReadFile(path)
@@ -210,9 +245,6 @@ func Load(path string) (*Config, error) {
 	}
 	if err := env.ParseWithOptions(cfg, env.Options{Prefix: "FCGHACT_"}); err != nil {
 		return nil, fmt.Errorf("parse environment: %w", err)
-	}
-	if err := cfg.Validate(); err != nil {
-		return nil, err
 	}
 	return cfg, nil
 }
@@ -299,8 +331,11 @@ func (c *Config) Validate() error {
 	if c.Firecracker.Binary == "" {
 		add("firecracker.binary must not be empty")
 	}
-	if c.Firecracker.KernelImage == "" || c.Firecracker.RootfsImage == "" || c.Firecracker.StateDir == "" {
-		add("firecracker kernel_image, rootfs_image and state_dir are required")
+	if c.Firecracker.KernelImage == "" || c.Firecracker.StateDir == "" {
+		add("firecracker kernel_image and state_dir are required")
+	}
+	if c.Firecracker.RootfsImage == "" && c.Rootfs.OCIReference == "" {
+		add("firecracker.rootfs_image or rootfs.oci_reference is required")
 	}
 	if c.Firecracker.VCPUCount <= 0 {
 		add("firecracker.vcpu_count must be positive")

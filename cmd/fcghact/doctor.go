@@ -12,6 +12,7 @@ import (
 	"github.com/vishvananda/netlink"
 
 	"github.com/tuna2134-workspace/fc-gh-act-ctrl/internal/githubapp"
+	"github.com/tuna2134-workspace/fc-gh-act-ctrl/internal/oci"
 )
 
 func doctorCmd() *cobra.Command {
@@ -50,8 +51,20 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	}
 	_, kernelErr := os.Stat(cfg.Firecracker.KernelImage)
 	report("kernel image", kernelErr, cfg.Firecracker.KernelImage)
-	_, rootfsErr := os.Stat(cfg.Firecracker.RootfsImage)
-	report("rootfs image", rootfsErr, cfg.Firecracker.RootfsImage)
+	if cfg.Rootfs.OCIReference != "" {
+		opts := rootfsOptionsFromConfig(cfg)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		info, err := oci.Inspect(ctx, opts)
+		cancel()
+		detail := cfg.Rootfs.OCIReference
+		if err == nil {
+			detail = fmt.Sprintf("%s digest=%s cached=%t", cfg.Rootfs.OCIReference, info.ImageDigest, info.Cached)
+		}
+		report("rootfs (oci)", err, detail)
+	} else {
+		_, rootfsErr := os.Stat(cfg.Firecracker.RootfsImage)
+		report("rootfs image", rootfsErr, cfg.Firecracker.RootfsImage)
+	}
 
 	if f, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0); err != nil {
 		report("/dev/kvm", err, "")

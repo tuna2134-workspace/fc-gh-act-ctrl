@@ -1,0 +1,74 @@
+name: rootfs
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "images/rootfs/**"
+      - "guest/agent/**"
+      - "scripts/build-rootfs.sh"
+      - "go.mod"
+      - "go.sum"
+    tags: ["rootfs-*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/fcghact-rootfs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: build tools
+        run: make build guest
+
+      - name: build rootfs
+        run: sudo env GUEST_AGENT_BINARY="$PWD/bin/fcghact-guest" ./scripts/build-rootfs.sh
+
+      - name: make rootfs readable
+        run: sudo chmod 0644 /var/lib/fcghact/rootfs.ext4
+
+      - name: login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: push rootfs
+        env:
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          image="$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')"
+          sha="$(git rev-parse --short=12 HEAD)"
+
+          bin/fcghact rootfs push \
+            --file /var/lib/fcghact/rootfs.ext4 \
+            --ref "${image}:${sha}" \
+            --source "${SOURCE}" \
+            --version "${sha}"
+
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            bin/fcghact rootfs push \
+              --file /var/lib/fcghact/rootfs.ext4 \
+              --ref "${image}:latest" \
+              --source "${SOURCE}" \
+              --version "${sha}"
+          fi
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            bin/fcghact rootfs push \
+              --file /var/lib/fcghact/rootfs.ext4 \
+              --ref "${image}:${GITHUB_REF_NAME}" \
+              --source "${SOURCE}" \
+              --version "${GITHUB_REF_NAME}"
+          fi
