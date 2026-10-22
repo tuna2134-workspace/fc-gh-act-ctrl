@@ -163,6 +163,41 @@ location = /webhook {
 location / { return 404; }
 ```
 
+## rootfs のサイズ変更
+
+**実行中の VM の rootfs は拡張できません**。Firecracker の virtio-blk 容量は起動時にファイルサイズから決まり、実行中に変更する API はありません。ベースイメージを大きくして、**新しい VM** に反映します。
+
+### エージェントが自動で拡張する場合
+
+新しい rootfs（`resize2fs` 実行機能入り）を使っている場合、ベースファイルを大きくするだけで、次回以降の VM が起動時に ext4 を拡張します。
+
+```bash
+# 既存のジョブには影響しません。新しい VM から 16G になります。
+sudo truncate -s 16G /var/lib/fcghact/rootfs.ext4
+```
+
+ゲストのコンソールに `root filesystem resized: ...` が出ます。実行中の VM を拡張したい場合は、そのジョブを終了させて新しい VM を起動してください。
+
+### エージェントを更新せずに今すぐ拡張する場合
+
+サービスを止めてベースイメージのファイルシステム自体を拡張します。
+
+```bash
+sudo systemctl stop fcghact
+sudo truncate -s 16G /var/lib/fcghact/rootfs.ext4
+sudo e2fsck -f /var/lib/fcghact/rootfs.ext4
+sudo resize2fs /var/lib/fcghact/rootfs.ext4
+sudo systemctl start fcghact
+```
+
+実行中のジョブは停止します。**縮小はしないでください**。作業前にバックアップを取ってください。
+
+### 注意
+
+- OCI の rootfs を使っている場合、キャッシュはレイヤのダイジェスト単位で管理されます。サイズを変える場合は大きい rootfs をビルドして push し、`rootfs.oci_reference` を更新してください。
+- Firecracker には PCI デバイスのホットプラグ機能（developer preview）があり、**新しい** virtio-block を実行中 VM に追加できます。ただし `--enable-pci` と `pcie_hotplug_ports`、ゲストカーネルの PCIe hotplug 対応が必要で、rootfs 自体の拡張はできません。本コントローラでは使用していません。
+- Docker のビルドデータは rootfs 上に置かれるため、8G 以上を推奨します。
+
 ## ワークフロー側
 
 ```yaml
@@ -312,6 +347,7 @@ scripts              ホストセットアップ用スクリプト
 - JIT ランナーは登録後にラベルが合致する任意の queued ジョブを取得できます。`fcghact` 専用ラベルと job ID 単位の claim で多重起動を抑止していますが、厳密な 1:1 割当が必要な場合は ARC の scale set プロトコル実装が必要です。
 - rootfs の reflink は btrfs / XFS (reflink=1) でのみ高速です。それ以外はフルコピーになります。
 - 1 ホスト 1 コントローラです (state dir の flock で二重起動を防ぎます)。
+- 実行中 VM の rootfs は拡張できません。ベースイメージを拡張し、新しい VM で反映してください (「rootfs のサイズ変更」参照)。
 - ゲストには Docker を同梱していません。Docker コンテナアクションや `docker build` を使う場合は、`docker/setup-docker-action` などでジョブ中に Docker をセットアップしてください。
   - そのために `iptables` を同梱し、カーネルが `nf_tables` 非対応のため `iptables-legacy` を選択しています。
   - Docker のデータは rootfs 上に置かれるため、`ROOTFS_SIZE` を大きめにしてください (例: 8G)。ビルドには `firecracker.vcpu_count: 4`, `firecracker.mem_size_mib: 4096` 程度を推奨します。

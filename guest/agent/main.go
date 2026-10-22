@@ -86,6 +86,8 @@ func envOr(key, fallback string) string {
 }
 
 func run(cfg config) error {
+	growRootFilesystem()
+
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.waitTimeout)
 	defer cancel()
 
@@ -115,6 +117,31 @@ func run(cfg config) error {
 	}
 	log.Printf("runner exited with code %d", code)
 	return nil
+}
+
+// growRootFilesystem expands the ext4 root filesystem to the size of the
+// virtio-blk device. The base image can therefore be grown later and new VMs
+// will use the additional space; running VMs cannot be resized.
+func growRootFilesystem() {
+	if _, err := os.Stat("/dev/vda"); err != nil {
+		return
+	}
+	bin, err := exec.LookPath("resize2fs")
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin, "/dev/vda").CombinedOutput()
+	text := strings.TrimSpace(string(out))
+	if err != nil {
+		log.Printf("resize2fs /dev/vda: %v: %s", err, text)
+		return
+	}
+	if strings.Contains(text, "Nothing to do") {
+		return
+	}
+	log.Printf("root filesystem resized: %s", text)
 }
 
 // runRunner executes the Actions runner in ephemeral JIT mode.
