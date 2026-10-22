@@ -224,6 +224,8 @@ func (c *mmdsClient) metadata(ctx context.Context, token string) (*metadata, err
 		return nil, err
 	}
 	req.Header.Set("X-metadata-token", token)
+	// Firecracker defaults to IMDS formatting unless JSON is requested.
+	req.Header.Set("Accept", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
@@ -232,10 +234,17 @@ func (c *mmdsClient) metadata(ctx context.Context, token string) (*metadata, err
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("metadata endpoint returned %s", resp.Status)
 	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read metadata: %w", err)
+	}
 	var meta metadata
-	dec := json.NewDecoder(io.LimitReader(resp.Body, 1<<20))
-	if err := dec.Decode(&meta); err != nil {
-		return nil, fmt.Errorf("decode metadata: %w", err)
+	if err := json.Unmarshal(body, &meta); err != nil {
+		snippet := body
+		if len(snippet) > 160 {
+			snippet = snippet[:160]
+		}
+		return nil, fmt.Errorf("decode metadata (body starts with %q): %w", snippet, err)
 	}
 	return &meta, nil
 }

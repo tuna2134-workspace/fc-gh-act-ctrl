@@ -78,6 +78,8 @@ GitHub Actions の self-hosted runner を Firecracker microVM 上で 1 ジョブ
    - Firecracker を起動し、MMDS v2 に JIT config・リポジトリ・DNS を注入
 6. ゲストの `fcghact-guest` が MMDS をポーリングしてメタデータを取得し、
    `/etc/resolv.conf` を書き、`run.sh --jitconfig` を実行する。
+   MMDS のデータストアは `{"latest":{"meta-data":{...}}}` の形で格納し、
+   ゲストは `Accept: application/json` を付けて `/latest/meta-data/` を取得する。
 7. ランナーはジョブを 1 つ実行して終了する。ゲストエージェントは `poweroff` する。
 8. コントローラは VMM の終了を検知して TAP 削除・IP 返却・ディスク削除を行う。
    同時に `workflow_job` (started/completed) と 30 秒間隔の job 状態ポーリングで

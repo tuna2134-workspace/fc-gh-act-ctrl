@@ -17,6 +17,7 @@ import (
 
 func TestMMDSClientReadsMetadata(t *testing.T) {
 	var attempts atomic.Int32
+	var accept atomic.Value
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/latest/api/token":
@@ -31,6 +32,7 @@ func TestMMDSClientReadsMetadata(t *testing.T) {
 			}
 			_, _ = w.Write([]byte("mmds-token"))
 		case "/latest/meta-data/":
+			accept.Store(r.Header.Get("Accept"))
 			if r.Header.Get("X-metadata-token") != "mmds-token" {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
@@ -53,6 +55,7 @@ func TestMMDSClientReadsMetadata(t *testing.T) {
 
 	meta, err := newMMDSClient(srv.URL).waitForMetadata(ctx)
 	require.NoError(t, err)
+	assert.Equal(t, "application/json", accept.Load())
 	assert.Equal(t, int64(42), meta.JobID)
 	assert.Equal(t, "runner-1", meta.RunnerName)
 	assert.Equal(t, "encoded", meta.JITConfig)
