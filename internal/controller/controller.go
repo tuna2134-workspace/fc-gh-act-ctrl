@@ -34,6 +34,8 @@ type Job struct {
 	WorkflowName   string
 	HTMLURL        string
 	EnqueuedAt     time.Time
+	// Plan is the VM size selected by a spec-<name> label (or the default).
+	Plan *ResolvedPlan
 }
 
 // Controller owns the job lifecycle.
@@ -157,9 +159,13 @@ func (c *Controller) handleQueued(job *github.WorkflowJob, repo githubapp.Repo, 
 		log.Debug("ignoring job that already has a runner", "runner", job.GetRunnerName())
 		return "ignored", nil
 	}
-	runnerLabels := c.runnerLabels()
-	if !MatchLabels(job.Labels, runnerLabels, c.cfg.Runner.RequireLabels) {
-		log.Debug("ignoring job with non-matching labels", "labels", job.Labels, "runner_labels", runnerLabels)
+	plan, err := c.resolvePlan(job.Labels)
+	if err != nil {
+		log.Info("ignoring job with an invalid or unknown plan", "error", err)
+		return "ignored", nil
+	}
+	if !MatchLabels(job.Labels, plan.Labels, c.cfg.Runner.RequireLabels) {
+		log.Debug("ignoring job with non-matching labels", "labels", job.Labels, "runner_labels", plan.Labels)
 		return "ignored", nil
 	}
 
@@ -173,6 +179,7 @@ func (c *Controller) handleQueued(job *github.WorkflowJob, repo githubapp.Repo, 
 		WorkflowName:   job.GetWorkflowName(),
 		HTMLURL:        job.GetHTMLURL(),
 		EnqueuedAt:     time.Now(),
+		Plan:           plan,
 	}
 	if !c.claims.acquire(j.ID) {
 		log.Debug("ignoring duplicate delivery for an already claimed job")
@@ -185,6 +192,7 @@ func (c *Controller) handleQueued(job *github.WorkflowJob, repo githubapp.Repo, 
 	}
 	log.Info("queued job",
 		"labels", j.Labels,
+		"plan", j.Plan.Name,
 		"workflow", j.WorkflowName,
 		"url", j.HTMLURL,
 	)
@@ -240,6 +248,15 @@ func (c *Controller) startJob(ctx context.Context, job *Job) {
 	}()
 
 	scope := c.scopeFor(job)
+	plan := job.Plan
+	if plan == nil {
+		var err error
+		plan, err = c.resolvePlan(job.Labels)
+		if err != nil {
+			c.log.Error("failed to resolve plan", "job_id", job.ID, "error", err)
+			return
+		}
+	}
 
 	// The job may have been picked up by another runner while it waited for a
 	// slot, in which case starting a VM would only create an idle runner.
@@ -271,10 +288,11 @@ func (c *Controller) startJob(ctx context.Context, job *Job) {
 		runnerName = c.runnerName(job.ID)
 		startedAt = time.Now()
 
-		c.log.Info("requesting just-in-time runner", "job_id", job.ID, "runner", runnerName, "attempt", attempt)
+		c.log.Info("requesting just-in-time runner",
+			"job_id", job.ID, "runner", runnerName, "plan", plan.Name, "attempt", attempt)
 		jit, err := c.api.GenerateJITConfig(ctx, scope, githubapp.JITRequest{
 			Name:          runnerName,
-			Labels:        c.runnerLabels(),
+			Labels:        plan.Labels,
 			RunnerGroupID: c.cfg.Runner.RunnerGroupID,
 			WorkFolder:    c.cfg.Runner.WorkFolder,
 		})
@@ -289,12 +307,16 @@ func (c *Controller) startJob(ctx context.Context, job *Job) {
 		sess = newSession(job, runnerName, jit.RunnerID, c.log)
 		c.sessions.add(sess)
 		handle, err = c.vms.Start(ctx, vm.Spec{
-			ID:         uuid.NewString(),
-			JobID:      job.ID,
-			Repository: job.Repo.String(),
-			RunnerName: runnerName,
-			JITConfig:  jit.Encoded,
-			WorkFolder: c.cfg.Runner.WorkFolder,
+			ID:            uuid.NewString(),
+			Plan:          plan.Name,
+			VCPUCount:     plan.VCPUCount,
+			MemSizeMiB:    plan.MemSizeMiB,
+			DiskSizeBytes: plan.DiskSizeBytes,
+			JobID:         job.ID,
+			Repository:    job.Repo.String(),
+			RunnerName:    runnerName,
+			JITConfig:     jit.Encoded,
+			WorkFolder:    c.cfg.Runner.WorkFolder,
 		})
 		if err != nil {
 			c.sessions.remove(sess)
@@ -321,6 +343,7 @@ func (c *Controller) startJob(ctx context.Context, job *Job) {
 	c.log.Info("microvm started for job",
 		"job_id", job.ID,
 		"runner", runnerName,
+		"plan", plan.Name,
 		"vm", handle.ID(),
 		"ip", handle.IP(),
 	)
@@ -518,17 +541,18 @@ func ResourceLabels(vcpu, memoryMiB, diskBytes int64) []string {
 	return out
 }
 
-// runnerLabels is the effective label set advertised by the JIT runner.
-func (c *Controller) runnerLabels() []string {
-	labels := append([]string(nil), c.cfg.Runner.Labels...)
-	if c.cfg.Runner.ResourceLabels {
-		labels = append(labels, ResourceLabels(
-			c.cfg.Firecracker.VCPUCount,
-			c.cfg.Firecracker.MemSizeMiB,
-			c.diskSizeBytes(),
-		)...)
+// resolvePlan selects the job's plan from its spec-<name> label, falling back
+// to plans.default or the global firecracker settings.
+func (c *Controller) resolvePlan(labels []string) (*ResolvedPlan, error) {
+	base := c.diskSizeBytes()
+	name, found, err := SpecLabelName(labels)
+	if err != nil {
+		return nil, err
 	}
-	return JITLabels(labels)
+	if found {
+		return ResolvePlan(c.cfg, name, base)
+	}
+	return ResolveDefaultPlan(c.cfg, base)
 }
 
 func (c *Controller) diskSizeBytes() int64 {

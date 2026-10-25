@@ -112,3 +112,18 @@ func copySparse(src, dst *os.File, size int64) error {
 	}
 	return dst.Truncate(size)
 }
+
+// growDisk extends path to target bytes. It never shrinks the file.
+func growDisk(path string, target int64) error {
+	if target <= 0 {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if target <= info.Size() {
+		return nil
+	}
+	return os.Truncate(path, target)
+}

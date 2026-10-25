@@ -85,6 +85,17 @@ GitHub Actions の self-hosted runner を Firecracker microVM 上で 1 ジョブ
    同時に `workflow_job` (started/completed) と 30 秒間隔の job 状態ポーリングで
    タイムアウトと早期停止を制御する。
 
+### VM プラン
+
+- `plans.<name>` に `vcpu_count` / `mem_size_mib` / `disk_size` を定義する。
+- ジョブは `spec-<name>` ラベルでプランを選ぶ。`spec-*` がなければ `plans.default`、
+  それもなければ `firecracker.*` の設定を使う。
+- 不明なプラン名や複数の `spec-*` ラベルは無視する（許可リスト方式）。
+- vCPU/メモリは `vm.Spec` でバックエンドに渡し、MachineConfig に反映する。
+- ディスクはベース rootfs のクローンを `truncate` で拡張し、ゲストの `resize2fs` で
+  ファイルシステムを広げる。ベースより小さいプランはベースサイズになる（縮小しない）。
+- 選択したプランの vCPU/メモリ/ディスクはリソースラベルとしても広告する。
+
 ### ライフサイクルの異常系
 
 | 事象 | 挙動 |

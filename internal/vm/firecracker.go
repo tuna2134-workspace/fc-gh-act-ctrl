@@ -148,6 +148,10 @@ func (b *FirecrackerBackend) Start(ctx context.Context, spec Spec) (Handle, erro
 		cleanup()
 		return nil, fmt.Errorf("prepare rootfs: %w", err)
 	}
+	if err := growDisk(diskPath, spec.DiskSizeBytes); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("grow rootfs clone: %w", err)
+	}
 
 	consolePath := filepath.Join(dir, "console.log")
 	console, err := os.OpenFile(consolePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -185,9 +189,17 @@ func (b *FirecrackerBackend) Start(ctx context.Context, spec Spec) (Handle, erro
 	cmd.Stdout = console
 	cmd.Stderr = console
 
+	vcpu := spec.VCPUCount
+	if vcpu <= 0 {
+		vcpu = b.cfg.VCPUCount
+	}
+	mem := spec.MemSizeMiB
+	if mem <= 0 {
+		mem = b.cfg.MemSizeMiB
+	}
 	machineCfg := models.MachineConfiguration{
-		VcpuCount:  firecracker.Int64(b.cfg.VCPUCount),
-		MemSizeMib: firecracker.Int64(b.cfg.MemSizeMiB),
+		VcpuCount:  firecracker.Int64(vcpu),
+		MemSizeMib: firecracker.Int64(mem),
 	}
 	if runtime.GOARCH == "amd64" {
 		// SMT is x86-only; sending it on aarch64 is rejected by Firecracker.
@@ -326,11 +338,15 @@ func (b *FirecrackerBackend) Start(ctx context.Context, spec Spec) (Handle, erro
 
 	b.log.Info("microvm started",
 		"vm", spec.ID,
+		"plan", spec.Plan,
 		"job_id", spec.JobID,
 		"repository", spec.Repository,
 		"runner", spec.RunnerName,
 		"ip", lease.IP.String(),
 		"tap", lease.Tap,
+		"vcpu", vcpu,
+		"mem_mib", mem,
+		"disk_bytes", spec.DiskSizeBytes,
 		"reflink", reflinked,
 	)
 

@@ -44,6 +44,24 @@ runner:
   job_timeout: 60m
   monitor_interval: 30s
 
+# 固定プラン。ジョブは runs-on: [self-hosted, fcghact, spec-<name>] で選ぶ。
+# 0 / 未指定の値は firecracker.* を継承する。disk_size はベース rootfs より
+# 小さい場合はベースサイズになる (縮小はしない)。
+plans:
+  mini-1:
+    vcpu_count: 2
+    mem_size_mib: 2048
+    disk_size: 8G
+  mini-2:
+    vcpu_count: 4
+    mem_size_mib: 8192
+    disk_size: 16G
+  # spec-* を指定しないジョブの既定プランにする場合
+  # default:
+  #   vcpu_count: 2
+  #   mem_size_mib: 2048
+  #   disk_size: 8G
+
 firecracker:
   binary: /usr/local/bin/firecracker
   kernel_image: /var/lib/fcghact/vmlinux

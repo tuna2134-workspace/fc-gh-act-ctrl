@@ -53,19 +53,63 @@ func TestResourceLabels(t *testing.T) {
 	assert.Empty(t, ResourceLabels(0, 0, 0))
 }
 
-func TestRunnerLabelsIncludeDiskSize(t *testing.T) {
+func TestDefaultPlanLabelsIncludeDiskSize(t *testing.T) {
 	cfg := testConfig()
-	path := filepath.Join(t.TempDir(), "rootfs.ext4")
-	f, err := os.Create(path)
+	plan, err := ResolveDefaultPlan(cfg, 8<<30)
 	require.NoError(t, err)
-	require.NoError(t, f.Truncate(8<<30))
-	require.NoError(t, f.Close())
-	cfg.Firecracker.RootfsImage = path
-
-	ctrl := New(cfg, &fakeAPI{}, &fakeBackend{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	assert.Subset(t, ctrl.runnerLabels(), []string{
+	assert.Equal(t, int64(8<<30), plan.DiskSizeBytes)
+	assert.Subset(t, plan.Labels, []string{
 		"self-hosted", "linux", "x64", "fcghact", "cpu-2", "memory-2g", "disk-8g",
 	})
+}
+
+func TestSpecLabelName(t *testing.T) {
+	name, found, err := SpecLabelName([]string{"self-hosted", "spec-mini-1"})
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "mini-1", name)
+
+	name, found, err = SpecLabelName([]string{"SPEC-Mini-1"})
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "mini-1", name)
+
+	_, _, err = SpecLabelName([]string{"spec-a", "spec-b"})
+	require.Error(t, err)
+	_, _, err = SpecLabelName([]string{"spec-"})
+	require.Error(t, err)
+}
+
+func TestResolvePlan(t *testing.T) {
+	cfg := testConfig()
+	cfg.Firecracker.VCPUCount = 2
+	cfg.Firecracker.MemSizeMiB = 2048
+	cfg.Plans = map[string]config.PlanConfig{
+		"mini-1": {
+			VCPUCount:  4,
+			MemSizeMiB: 8192,
+			DiskSize:   config.Size(8 << 30),
+		},
+		"inherit": {
+			DiskSize: config.Size(4 << 30),
+		},
+	}
+
+	plan, err := ResolvePlan(cfg, "mini-1", 4<<30)
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), plan.VCPUCount)
+	assert.Equal(t, int64(8192), plan.MemSizeMiB)
+	assert.Equal(t, int64(8<<30), plan.DiskSizeBytes)
+	assert.Subset(t, plan.Labels, []string{"spec-mini-1", "cpu-4", "memory-8g", "disk-8g"})
+
+	plan, err = ResolvePlan(cfg, "inherit", 4<<30)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), plan.VCPUCount)
+	assert.Equal(t, int64(2048), plan.MemSizeMiB)
+	assert.Equal(t, int64(4<<30), plan.DiskSizeBytes)
+
+	_, err = ResolvePlan(cfg, "missing", 0)
+	require.Error(t, err)
 }
 
 func TestJITLabels(t *testing.T) {
@@ -205,6 +249,12 @@ func (b *fakeBackend) Shutdown(context.Context) error {
 	return nil
 }
 
+func (b *fakeBackend) lastSpec() vm.Spec {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.specs[len(b.specs)-1]
+}
+
 func (b *fakeBackend) count() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -325,6 +375,70 @@ func TestControllerDeduplicatesQueuedDeliveries(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 	assert.Equal(t, 1, backend.count())
 	assert.Equal(t, 1, api.count())
+}
+
+func TestControllerDispatchesPlan(t *testing.T) {
+	cfg := testConfig()
+	base := filepath.Join(t.TempDir(), "rootfs.ext4")
+	f, err := os.Create(base)
+	require.NoError(t, err)
+	require.NoError(t, f.Truncate(4<<30))
+	require.NoError(t, f.Close())
+	cfg.Firecracker.RootfsImage = base
+	cfg.Plans = map[string]config.PlanConfig{
+		"mini-1": {VCPUCount: 4, MemSizeMiB: 8192, DiskSize: config.Size(8 << 30)},
+	}
+	api := &fakeAPI{}
+	backend := &fakeBackend{}
+	ctrl := New(cfg, api, backend, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ctrl.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		_ = ctrl.Shutdown(context.Background())
+		<-done
+	})
+
+	event := queuedEvent(55, []string{"self-hosted", "fcghact", "spec-mini-1"}, "owner/repo")
+	require.NoError(t, ctrl.HandleWorkflowJob(ctx, event, "plan"))
+	require.Eventually(t, func() bool { return backend.count() == 1 }, 3*time.Second, 10*time.Millisecond)
+
+	spec := backend.lastSpec()
+	assert.Equal(t, "mini-1", spec.Plan)
+	assert.Equal(t, int64(4), spec.VCPUCount)
+	assert.Equal(t, int64(8192), spec.MemSizeMiB)
+	assert.Equal(t, int64(8<<30), spec.DiskSizeBytes)
+	assert.Subset(t, api.lastRequest().Labels, []string{
+		"spec-mini-1", "cpu-4", "memory-8g", "disk-8g",
+	})
+}
+
+func TestControllerIgnoresUnknownPlan(t *testing.T) {
+	cfg := testConfig()
+	cfg.Plans = map[string]config.PlanConfig{
+		"mini-1": {VCPUCount: 4},
+	}
+	api := &fakeAPI{}
+	backend := &fakeBackend{}
+	ctrl := New(cfg, api, backend, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go ctrl.Run(ctx)
+
+	require.NoError(t, ctrl.HandleWorkflowJob(ctx,
+		queuedEvent(56, []string{"self-hosted", "fcghact", "spec-nope"}, "owner/repo"), "a"))
+	require.NoError(t, ctrl.HandleWorkflowJob(ctx,
+		queuedEvent(57, []string{"self-hosted", "fcghact", "spec-mini-1", "spec-mini-1"}, "owner/repo"), "b"))
+
+	time.Sleep(100 * time.Millisecond)
+	assert.Zero(t, api.count())
+	assert.Zero(t, backend.count())
 }
 
 func TestControllerIgnoresNonMatchingJobs(t *testing.T) {

@@ -73,6 +73,24 @@ func TestCloneFileSparse(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+func TestGrowDisk(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "disk.ext4")
+	require.NoError(t, os.WriteFile(path, []byte("data"), 0o600))
+
+	require.NoError(t, growDisk(path, 1<<20))
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1<<20), info.Size())
+
+	// Shrinking is a no-op.
+	require.NoError(t, growDisk(path, 1024))
+	info, err = os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1<<20), info.Size())
+
+	require.Error(t, growDisk(filepath.Join(t.TempDir(), "missing"), 1024))
+}
+
 func TestCloneFileFailsWhenDestinationExists(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")

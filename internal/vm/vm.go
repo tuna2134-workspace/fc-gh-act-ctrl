@@ -12,6 +12,14 @@ import (
 type Spec struct {
 	// ID is the VM identifier; a UUID is generated when empty.
 	ID string
+	// Plan is the configured plan name, for logs.
+	Plan string
+	// VCPUCount and MemSizeMiB override the backend defaults when positive.
+	VCPUCount  int64
+	MemSizeMiB int64
+	// DiskSizeBytes grows the cloned rootfs to this size when larger than the
+	// base image. The guest agent expands the filesystem at boot.
+	DiskSizeBytes int64
 	// JobID is the GitHub Actions workflow job ID, for logs and correlation.
 	JobID int64
 	// Repository is owner/name.
@@ -36,6 +44,12 @@ func (s Spec) validate() error {
 		return fmt.Errorf("vm spec: repository is required")
 	case strings.ContainsAny(s.ID, `/\`):
 		return fmt.Errorf("vm spec: invalid id %q", s.ID)
+	case s.VCPUCount < 0:
+		return fmt.Errorf("vm spec: negative vcpu count")
+	case s.MemSizeMiB < 0:
+		return fmt.Errorf("vm spec: negative memory size")
+	case s.DiskSizeBytes < 0:
+		return fmt.Errorf("vm spec: negative disk size")
 	}
 	return nil
 }

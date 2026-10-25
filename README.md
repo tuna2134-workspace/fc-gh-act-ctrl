@@ -213,9 +213,43 @@ jobs:
 
 `runner.labels` は JIT config に **そのまま** 渡されます。GitHub は `self-hosted` や OS/arch を自動追加しないため、ジョブが要求するラベルをすべて含めてください（既定は `self-hosted,linux,x64,fcghact`）。
 
+### プラン（VM サイズ）を固定する
+
+`plans` に名前付きの VM サイズを定義すると、ジョブは `spec-<name>` ラベルで選択できます。任意のサイズ指定はできず、構成ファイルにあるプランだけが使われます。
+
+```yaml
+plans:
+  mini-1:
+    vcpu_count: 2
+    mem_size_mib: 2048
+    disk_size: 8G
+  mini-2:
+    vcpu_count: 4
+    mem_size_mib: 8192
+    disk_size: 16G
+```
+
+```yaml
+jobs:
+  build:
+    runs-on: [self-hosted, fcghact, spec-mini-1]
+```
+
+- `spec-<name>` ラベルはランナーに自動で追加されます。
+- `vcpu_count` / `mem_size_mib` が 0 または未指定なら `firecracker.*` を継承します。
+- `disk_size` が未指定・0 ならベース rootfs のサイズを使います。ベースより小さい値は無視されます（縮小はしません）。
+- `plans.default` を定義すると、`spec-*` を指定しないジョブの既定プランになります。未定義なら従来どおり `firecracker.*` の設定です。
+- 不明なプラン名や複数の `spec-*` ラベルが付いたジョブは無視され、queued のままになります。プラン定義の変更はコントローラ再起動で反映されます。
+- ディスク拡張は VM 起動時にクローンを `truncate` し、ゲストの `resize2fs` でファイルシステムを広げます。
+- 手動実行では `--plan` が使えます。
+
+```bash
+bin/fcghact run --repo owner/repo --job-id 123 --plan mini-1
+```
+
 ### リソースラベル
 
-`runner.resource_labels`（既定 `true`）を有効にすると、VM のスペックが JIT ラベルとして自動追加されます。
+`runner.resource_labels`（既定 `true`）を有効にすると、選択されたプラン（または既定設定）のスペックが JIT ラベルとして自動追加されます。
 
 | ラベル | 例 | 意味 |
 |---|---|---|
@@ -258,6 +292,7 @@ runs-on: [self-hosted, fcghact, cpu-4, memory-8g, disk-16g]
 | `github.organizations` | 空 | 許可する組織名のリスト |
 | `runner.labels` | `self-hosted,linux,x64,fcghact` | ランナーが広告する基本ラベル |
 | `runner.resource_labels` | `true` | `cpu-*` / `memory-*` / `disk-*` を自動追加 |
+| `plans.<name>.vcpu_count` / `mem_size_mib` / `disk_size` | グローバル設定 | `spec-<name>` で選ぶ固定プラン |
 | `runner.require_labels` | `fcghact` | ジョブが必ず含むべきラベル |
 | `runner.max_concurrent_jobs` | `4` | 同時に起動する VM 数 |
 | `runner.max_jobs_per_repo` | `2` | 1 リポジトリあたりの同時実行数 |

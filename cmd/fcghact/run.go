@@ -20,6 +20,7 @@ import (
 var (
 	runRepo  string
 	runOrg   string
+	runPlan  string
 	runJobID int64
 )
 
@@ -33,6 +34,7 @@ func runCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&runRepo, "repo", "", "repository in owner/name form")
 	cmd.Flags().StringVar(&runOrg, "org", "", "organization (required when github.scope is org)")
+	cmd.Flags().StringVar(&runPlan, "plan", "", "VM plan from the plans section (runs-on spec-<name>)")
 	cmd.Flags().Int64Var(&runJobID, "job-id", 0, "workflow job ID")
 	_ = cmd.MarkFlagRequired("repo")
 	_ = cmd.MarkFlagRequired("job-id")
@@ -94,23 +96,26 @@ func runJob(cmd *cobra.Command, _ []string) error {
 	if status.Status != "queued" {
 		return fmt.Errorf("job %d is %q; only queued jobs can be dispatched", runJobID, status.Status)
 	}
-	labels := append([]string(nil), cfg.Runner.Labels...)
-	if cfg.Runner.ResourceLabels {
-		var disk int64
-		if info, err := os.Stat(cfg.Firecracker.RootfsImage); err == nil {
-			disk = info.Size()
-		}
-		labels = append(labels, controller.ResourceLabels(
-			cfg.Firecracker.VCPUCount, cfg.Firecracker.MemSizeMiB, disk)...)
+	var baseDisk int64
+	if info, err := os.Stat(cfg.Firecracker.RootfsImage); err == nil {
+		baseDisk = info.Size()
 	}
-	labels = controller.JITLabels(labels)
+	var plan *controller.ResolvedPlan
+	if runPlan != "" {
+		plan, err = controller.ResolvePlan(cfg, runPlan, baseDisk)
+	} else {
+		plan, err = controller.ResolveDefaultPlan(cfg, baseDisk)
+	}
+	if err != nil {
+		return err
+	}
 	log.Info("dispatching job manually", "job_id", runJobID, "repository", repo.String(),
-		"job_labels", status.Labels, "runner_labels", labels)
+		"plan", plan.Name, "job_labels", status.Labels, "runner_labels", plan.Labels)
 
 	runnerName := fmt.Sprintf("%s-manual-%d", cfg.Runner.NamePrefix, runJobID)
 	jit, err := apiSvc.GenerateJITConfig(ctx, scope, githubapp.JITRequest{
 		Name:          runnerName,
-		Labels:        labels,
+		Labels:        plan.Labels,
 		RunnerGroupID: cfg.Runner.RunnerGroupID,
 		WorkFolder:    cfg.Runner.WorkFolder,
 	})
@@ -119,12 +124,16 @@ func runJob(cmd *cobra.Command, _ []string) error {
 	}
 
 	handle, err := backend.Start(ctx, vm.Spec{
-		ID:         uuid.NewString(),
-		JobID:      runJobID,
-		Repository: repo.String(),
-		RunnerName: runnerName,
-		JITConfig:  jit.Encoded,
-		WorkFolder: cfg.Runner.WorkFolder,
+		ID:            uuid.NewString(),
+		Plan:          plan.Name,
+		VCPUCount:     plan.VCPUCount,
+		MemSizeMiB:    plan.MemSizeMiB,
+		DiskSizeBytes: plan.DiskSizeBytes,
+		JobID:         runJobID,
+		Repository:    repo.String(),
+		RunnerName:    runnerName,
+		JITConfig:     jit.Encoded,
+		WorkFolder:    cfg.Runner.WorkFolder,
 	})
 	if err != nil {
 		return err

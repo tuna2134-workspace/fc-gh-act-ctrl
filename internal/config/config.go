@@ -58,6 +58,16 @@ type Config struct {
 	Firecracker FirecrackerConfig `yaml:"firecracker"`
 	Network     NetworkConfig     `yaml:"network"`
 	Rootfs      RootfsConfig      `yaml:"rootfs"`
+	// Plans defines named VM sizes selected by a spec-<name> job label.
+	Plans map[string]PlanConfig `yaml:"plans" env:"-"`
+}
+
+// PlanConfig is a fixed VM size. Zero values inherit the corresponding
+// firecracker setting; an empty disk size uses the base rootfs image size.
+type PlanConfig struct {
+	VCPUCount  int64 `yaml:"vcpu_count"`
+	MemSizeMiB int64 `yaml:"mem_size_mib"`
+	DiskSize   Size  `yaml:"disk_size"`
 }
 
 // RootfsConfig controls optional OCI distribution of the guest rootfs image.
@@ -374,6 +384,8 @@ func (c *Config) Validate() error {
 			add("network.dns contains an invalid IP: %q", d)
 		}
 	}
+
+	c.validatePlans(add)
 
 	return errors.Join(errs...)
 }

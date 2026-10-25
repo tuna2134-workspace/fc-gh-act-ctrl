@@ -153,6 +153,71 @@ func TestValidateAllowsOCIWithoutLocalRootfs(t *testing.T) {
 	require.ErrorContains(t, cfg.Validate(), "rootfs_image")
 }
 
+func TestParseSize(t *testing.T) {
+	tests := map[string]int64{
+		"1024": 1024,
+		"1K":   1 << 10,
+		"512M": 512 << 20,
+		"8G":   8 << 30,
+		"8GiB": 8 << 30,
+		"1T":   1 << 40,
+		" 4G ": 4 << 30,
+	}
+	for input, want := range tests {
+		got, err := ParseSize(input)
+		require.NoError(t, err, input)
+		assert.Equal(t, want, got.Bytes(), input)
+	}
+	for _, bad := range []string{"", "-1G", "abc", "1.5G", "8X"} {
+		_, err := ParseSize(bad)
+		require.Error(t, err, bad)
+	}
+}
+
+func TestPlansFromYAML(t *testing.T) {
+	setRequiredEnv(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	raw := `
+plans:
+  mini-1:
+    vcpu_count: 4
+    mem_size_mib: 8192
+    disk_size: 8G
+  inherit:
+    disk_size: 4G
+`
+	require.NoError(t, os.WriteFile(path, []byte(raw), 0o600))
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.Contains(t, cfg.Plans, "mini-1")
+	assert.Equal(t, int64(4), cfg.Plans["mini-1"].VCPUCount)
+	assert.Equal(t, int64(8192), cfg.Plans["mini-1"].MemSizeMiB)
+	assert.Equal(t, int64(8<<30), cfg.Plans["mini-1"].DiskSize.Bytes())
+	assert.Equal(t, int64(0), cfg.Plans["inherit"].VCPUCount)
+}
+
+func TestValidatePlans(t *testing.T) {
+	base := func() *Config {
+		cfg := Default()
+		cfg.GitHub.AppID = 1
+		cfg.GitHub.PrivateKeyPath = "/tmp/key.pem"
+		cfg.GitHub.WebhookSecret = "secret"
+		return cfg
+	}
+	t.Run("bad name", func(t *testing.T) {
+		cfg := base()
+		cfg.Plans = map[string]PlanConfig{"Mini 1": {}}
+		require.ErrorContains(t, cfg.Validate(), "plans.Mini 1")
+	})
+	t.Run("negative values", func(t *testing.T) {
+		cfg := base()
+		cfg.Plans = map[string]PlanConfig{"mini-1": {VCPUCount: -1, MemSizeMiB: -1}}
+		require.ErrorContains(t, cfg.Validate(), "vcpu_count")
+	})
+}
+
 func TestDurationText(t *testing.T) {
 	var d Duration
 	require.NoError(t, d.UnmarshalText([]byte("90s")))
