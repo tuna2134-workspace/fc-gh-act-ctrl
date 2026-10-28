@@ -18,7 +18,7 @@ RUN apt-get update \
       systemd systemd-sysv dbus udev \
       iproute2 iputils-ping netbase procps tzdata \
       libicu74 libssl3t64 zlib1g \
-      sudo iptables e2fsprogs \
+      sudo iptables e2fsprogs build-essential \
  && rm -rf /var/lib/apt/lists/*
 
 # Docker is intentionally not baked into the image. Actions such as

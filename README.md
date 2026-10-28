@@ -405,6 +405,7 @@ scripts              ホストセットアップ用スクリプト
 - rootfs の reflink は btrfs / XFS (reflink=1) でのみ高速です。それ以外はフルコピーになります。
 - 1 ホスト 1 コントローラです (state dir の flock で二重起動を防ぎます)。
 - 実行中 VM の rootfs は拡張できません。ベースイメージを拡張し、新しい VM で反映してください (「rootfs のサイズ変更」参照)。
+- ゲストには `build-essential`（gcc / g++ / make）を同梱しています。ネイティブ拡張のビルドなどに使えます。
 - ゲストには Docker を同梱していません。Docker コンテナアクションや `docker build` を使う場合は、`docker/setup-docker-action` などでジョブ中に Docker をセットアップしてください。
   - そのために `iptables` を同梱し、カーネルが `nf_tables` 非対応のため `iptables-legacy` を選択しています。
   - Docker のデータは rootfs 上に置かれるため、`ROOTFS_SIZE` を大きめにしてください (例: 8G)。ビルドには `firecracker.vcpu_count: 4`, `firecracker.mem_size_mib: 4096` 程度を推奨します。
