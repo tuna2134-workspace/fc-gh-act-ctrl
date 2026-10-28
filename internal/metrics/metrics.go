@@ -51,6 +51,28 @@ var (
 		Buckets: []float64{30, 60, 120, 300, 600, 1800, 3600, 7200},
 	})
 
+	// VMPrepareSeconds observes network allocation, rootfs clone and state setup.
+	VMPrepareSeconds = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "fcghact_vm_prepare_seconds",
+		Help:    "Time spent preparing a microVM before boot (network, rootfs, state).",
+		Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 30},
+	})
+
+	// VMBootSeconds observes Firecracker startup up to InstanceStart.
+	VMBootSeconds = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "fcghact_vm_boot_seconds",
+		Help:    "Time from starting the VMM to Firecracker reporting the instance as running.",
+		Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10},
+	})
+
+	// RunnerReadySeconds observes the time from webhook acceptance to the runner
+	// picking up the job.
+	RunnerReadySeconds = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "fcghact_runner_ready_seconds",
+		Help:    "Time from accepting a queued job to the runner starting it.",
+		Buckets: []float64{0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600},
+	})
+
 	// QueueDepth is the number of jobs waiting for a slot.
 	QueueDepth = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "fcghact_queue_depth",

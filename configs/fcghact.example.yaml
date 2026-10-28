@@ -69,13 +69,16 @@ firecracker:
   state_dir: /var/lib/fcghact
   vcpu_count: 2
   mem_size_mib: 2048
-  boot_args: "console=ttyS0 reboot=k panic=1 pci=off net.ifnames=0 root=/dev/vda rw rootfstype=ext4"
+  boot_args: "console=ttyS0 quiet loglevel=3 reboot=k panic=1 pci=off net.ifnames=0 root=/dev/vda rw rootfstype=ext4"
   log_level: Warning
   # reflink uses FICLONE for instant copy-on-write rootfs clones. It falls back
   # to a full copy on filesystems that do not support it.
   reflink: true
   # Copy console.log / firecracker.log to <state_dir>/logs/<vm-id>/ on exit.
   keep_logs: false
+  # Keep ready rootfs clones so VM start does not wait for the copy.
+  # Each entry consumes the used size of the base rootfs. 0 disables.
+  preclone_pool: 2
 
 rootfs:
   # When set, the guest rootfs is pulled from an OCI registry at startup and

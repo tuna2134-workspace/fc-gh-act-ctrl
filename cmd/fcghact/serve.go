@@ -76,6 +76,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	if err := backend.Reap(ctx); err != nil {
 		log.Warn("failed to reap leftover state", "error", err)
 	}
+	backend.StartPool()
 
 	ctrl := controller.New(cfg, apiSvc, backend, log)
 	srv := server.New(server.Options{

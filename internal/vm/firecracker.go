@@ -21,6 +21,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/tuna2134-workspace/fc-gh-act-ctrl/internal/config"
+	"github.com/tuna2134-workspace/fc-gh-act-ctrl/internal/metrics"
 	"github.com/tuna2134-workspace/fc-gh-act-ctrl/internal/network"
 )
 
@@ -42,6 +43,7 @@ type FirecrackerBackend struct {
 	log         *slog.Logger
 	fcLogger    *logrus.Logger
 	bootTimeout time.Duration
+	pool        *clonePool
 
 	mu     sync.Mutex
 	active map[string]*machineHandle
@@ -89,7 +91,9 @@ func NewFirecracker(opts Options) (*FirecrackerBackend, error) {
 		log:         opts.Logger,
 		fcLogger:    fcLogger,
 		bootTimeout: opts.BootTimeout,
-		active:      make(map[string]*machineHandle),
+		pool: newClonePool(filepath.Join(opts.Config.StateDir, "pool"), opts.Config.RootfsImage,
+			opts.Config.PreclonePool, opts.Config.Reflink, opts.Logger),
+		active: make(map[string]*machineHandle),
 	}, nil
 }
 
@@ -119,6 +123,8 @@ func (b *FirecrackerBackend) Start(ctx context.Context, spec Spec) (Handle, erro
 	}
 	b.mu.Unlock()
 
+	prepareStart := time.Now()
+
 	dir := b.vmDir(spec.ID)
 	socketPath := filepath.Join(dir, "firecracker.sock")
 	if len(socketPath) >= 100 {
@@ -143,15 +149,30 @@ func (b *FirecrackerBackend) Start(ctx context.Context, spec Spec) (Handle, erro
 	}
 
 	diskPath := filepath.Join(dir, "rootfs.ext4")
-	reflinked, err := cloneFile(b.cfg.RootfsImage, diskPath, b.cfg.Reflink)
-	if err != nil {
-		cleanup()
-		return nil, fmt.Errorf("prepare rootfs: %w", err)
+	var (
+		reflinked bool
+		pooled    bool
+	)
+	if path := b.pool.take(); path != "" {
+		if err := os.Rename(path, diskPath); err == nil {
+			pooled = true
+		} else {
+			b.log.Warn("move precloned rootfs", "error", err)
+			_ = os.Remove(path)
+		}
+	}
+	if !pooled {
+		reflinked, err = cloneFile(b.cfg.RootfsImage, diskPath, b.cfg.Reflink)
+		if err != nil {
+			cleanup()
+			return nil, fmt.Errorf("prepare rootfs: %w", err)
+		}
 	}
 	if err := growDisk(diskPath, spec.DiskSizeBytes); err != nil {
 		cleanup()
 		return nil, fmt.Errorf("grow rootfs clone: %w", err)
 	}
+	metrics.VMPrepareSeconds.Observe(time.Since(prepareStart).Seconds())
 
 	consolePath := filepath.Join(dir, "console.log")
 	console, err := os.OpenFile(consolePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -261,6 +282,7 @@ func (b *FirecrackerBackend) Start(ctx context.Context, spec Spec) (Handle, erro
 	machine.Handlers.FcInit = machine.Handlers.FcInit.Append(
 		firecracker.NewSetMetadataHandler(newMetadataEnvelope(meta)))
 
+	bootStart := time.Now()
 	startCh := make(chan error, 1)
 	go func() { startCh <- machine.Start(vmCtx) }()
 
@@ -274,6 +296,7 @@ func (b *FirecrackerBackend) Start(ctx context.Context, spec Spec) (Handle, erro
 			_ = killVMsBySocket(context.Background(), socketPath)
 			return fail(fmt.Errorf("boot microvm: %w", err))
 		}
+		metrics.VMBootSeconds.Observe(time.Since(bootStart).Seconds())
 	case <-timer.C:
 		vmCancel()
 		_ = machine.StopVMM()
@@ -348,6 +371,9 @@ func (b *FirecrackerBackend) Start(ctx context.Context, spec Spec) (Handle, erro
 		"mem_mib", mem,
 		"disk_bytes", spec.DiskSizeBytes,
 		"reflink", reflinked,
+		"pooled", pooled,
+		"prepare_ms", time.Since(prepareStart).Milliseconds(),
+		"boot_ms", time.Since(bootStart).Milliseconds(),
 	)
 
 	go func() { h.finish(machine.Wait(context.Background())) }()
@@ -371,6 +397,9 @@ func (b *FirecrackerBackend) archiveLogs(dir, id string) {
 		}
 	}
 }
+
+// StartPool begins filling the preclone pool in the background.
+func (b *FirecrackerBackend) StartPool() { b.pool.start() }
 
 func (b *FirecrackerBackend) unregister(id string) {
 	b.mu.Lock()
@@ -420,6 +449,9 @@ func (b *FirecrackerBackend) Reap(ctx context.Context) error {
 			errs = append(errs, fmt.Errorf("remove %s: %w", dir, err))
 		}
 	}
+	if err := os.RemoveAll(filepath.Join(b.cfg.StateDir, "pool")); err != nil {
+		errs = append(errs, fmt.Errorf("remove preclone pool: %w", err))
+	}
 	if err := b.net.ReapTaps(); err != nil {
 		errs = append(errs, fmt.Errorf("reap taps: %w", err))
 	}
@@ -440,6 +472,8 @@ func (b *FirecrackerBackend) Shutdown(ctx context.Context) error {
 		handles = append(handles, h)
 	}
 	b.mu.Unlock()
+
+	b.pool.close()
 
 	var g errgroup.Group
 	for _, h := range handles {

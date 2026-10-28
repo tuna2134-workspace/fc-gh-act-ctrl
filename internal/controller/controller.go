@@ -199,14 +199,36 @@ func (c *Controller) handleQueued(job *github.WorkflowJob, repo githubapp.Repo, 
 	return "accepted", nil
 }
 
-func (c *Controller) handleStarted(job *github.WorkflowJob, log *slog.Logger) {
+func (c *Controller) handleStarted(job *github.WorkflowJob, _ *slog.Logger) {
 	sess := c.findSession(job)
 	if sess == nil {
 		return
 	}
-	log.Info("job picked up by runner",
+	c.markRunnerStarted(sess)
+}
+
+// markRunnerStarted records the first time a runner picks up its job.
+func (c *Controller) markRunnerStarted(sess *session) {
+	if !sess.markStarted() {
+		return
+	}
+	handle := sess.currentHandle()
+	total := time.Since(sess.job.EnqueuedAt)
+	var (
+		fromVM time.Duration
+		vmID   string
+	)
+	if handle != nil {
+		fromVM = time.Since(handle.StartedAt())
+		vmID = handle.ID()
+	}
+	metrics.RunnerReadySeconds.Observe(total.Seconds())
+	c.log.Info("job picked up by runner",
+		"job_id", sess.job.ID,
 		"runner", sess.runnerName,
-		"vm", sess.handleID(),
+		"vm", vmID,
+		"queue_to_runner", total.Round(time.Millisecond).String(),
+		"vm_to_runner", fromVM.Round(time.Millisecond).String(),
 	)
 }
 
@@ -290,6 +312,7 @@ func (c *Controller) startJob(ctx context.Context, job *Job) {
 
 		c.log.Info("requesting just-in-time runner",
 			"job_id", job.ID, "runner", runnerName, "plan", plan.Name, "attempt", attempt)
+		jitStart := time.Now()
 		jit, err := c.api.GenerateJITConfig(ctx, scope, githubapp.JITRequest{
 			Name:          runnerName,
 			Labels:        plan.Labels,
@@ -303,6 +326,8 @@ func (c *Controller) startJob(ctx context.Context, job *Job) {
 			c.log.Error("failed to create just-in-time runner", "job_id", job.ID, "error", err)
 			return
 		}
+		c.log.Info("just-in-time runner ready", "job_id", job.ID,
+			"duration_ms", time.Since(jitStart).Milliseconds())
 
 		sess = newSession(job, runnerName, jit.RunnerID, c.log)
 		c.sessions.add(sess)
@@ -451,6 +476,9 @@ func (c *Controller) reconcile(ctx context.Context) {
 				sess.requestStop()
 			}
 		case "in_progress":
+			if assignedToUs {
+				c.markRunnerStarted(sess)
+			}
 			if assignedToUs && age > c.cfg.Runner.JobTimeout.Duration() {
 				c.log.Warn("job timeout exceeded, stopping vm", "job_id", sess.job.ID, "runner", sess.runnerName)
 				sess.requestStop()
@@ -708,6 +736,7 @@ type session struct {
 	mu            sync.Mutex
 	handle        vm.Handle
 	stopRequested bool
+	started       bool
 
 	consoleMu    sync.Mutex
 	consoleOff   int64
@@ -795,6 +824,16 @@ func (s *session) handleID() string {
 		return h.ID()
 	}
 	return ""
+}
+
+func (s *session) markStarted() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.started {
+		return false
+	}
+	s.started = true
+	return true
 }
 
 func (s *session) stopWasRequested() bool {

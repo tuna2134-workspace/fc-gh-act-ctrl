@@ -198,6 +198,44 @@ sudo systemctl start fcghact
 - Firecracker には PCI デバイスのホットプラグ機能（developer preview）があり、**新しい** virtio-block を実行中 VM に追加できます。ただし `--enable-pci` と `pcie_hotplug_ports`、ゲストカーネルの PCIe hotplug 対応が必要で、rootfs 自体の拡張はできません。本コントローラでは使用していません。
 - Docker のビルドデータは rootfs 上に置かれるため、8G 以上を推奨します。
 
+## 起動時間の改善
+
+起動時間の内訳はログとメトリクスで確認できます。
+
+- `microvm started`: `prepare_ms`（ネットワーク確保 + rootfs 準備）、`boot_ms`（Firecracker 起動）、`pooled`（事前クローンを使ったか）
+- `job picked up by runner`: `queue_to_runner`（Webhook 受付からランナーがジョブを取得するまで）、`vm_to_runner`（VM 起動から取得まで）
+- メトリクス: `fcghact_vm_prepare_seconds`, `fcghact_vm_boot_seconds`, `fcghact_runner_ready_seconds`
+
+### 1. rootfs の事前クローン pool
+
+```yaml
+firecracker:
+  preclone_pool: 2   # 既定 2。0 で無効
+```
+
+`<state_dir>/pool` に rootfs のクローンを保持し、VM 起動時は rename するだけにします。各クローンはベース rootfs の使用量分のディスクを使います。`reflink` 非対応の FS でもコピーをクリティカルパスから外せます。
+
+### 2. reflink の活用
+
+`state_dir` を XFS (reflink=1) や btrfs に置くと `FICLONE` が効き、クローンが即時になります。
+
+### 3. ゲスト起動のチューニング
+
+既定の `boot_args` に `quiet loglevel=3` を追加し、シリアルコンソールへの起動ログを減らしています。あわせて rootfs イメージで `e2scrub_reap` や apt のタイマーなど不要な unit を mask しています。
+
+既存の設定ファイルを使っている場合は `boot_args` を更新してください。
+
+```yaml
+firecracker:
+  boot_args: "console=ttyS0 quiet loglevel=3 reboot=k panic=1 pci=off net.ifnames=0 root=/dev/vda rw rootfstype=ext4"
+```
+
+mask は rootfs イメージ側の変更なので、rootfs の再ビルド（OCI の場合は再 push）が必要です。ランナーの `Listening for Jobs` などの出力は console に残るため、アイドル判定には影響しません。
+
+### 4. それでも足りない場合
+
+warm pool（起動済み VM を MMDS で待機）や Firecracker snapshot + UFFD はロードマップです。現状は 1 ジョブごとに VM をコールドスタートします。
+
 ## ワークフロー側
 
 ```yaml

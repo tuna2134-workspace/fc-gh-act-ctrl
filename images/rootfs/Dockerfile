@@ -44,6 +44,12 @@ RUN chmod 0755 /usr/local/bin/fcghact-guest \
  && ln -sf /etc/systemd/system/fcghact-guest.service /etc/systemd/system/multi-user.target.wants/fcghact-guest.service \
  && ln -sf /dev/null /etc/systemd/system/getty@tty1.service \
  && ln -sf /dev/null /etc/systemd/system/serial-getty@ttyS0.service \
+ && ln -sf /dev/null /etc/systemd/system/e2scrub_reap.service \
+ && ln -sf /dev/null /etc/systemd/system/apt-daily.timer \
+ && ln -sf /dev/null /etc/systemd/system/apt-daily-upgrade.timer \
+ && ln -sf /dev/null /etc/systemd/system/dpkg-db-backup.timer \
+ && ln -sf /dev/null /etc/systemd/system/motd-news.timer \
+ && ln -sf /dev/null /etc/systemd/system/systemd-tmpfiles-clean.timer \
  && printf '[Journal]\nStorage=volatile\nRuntimeMaxUse=64M\n' > /etc/systemd/journald.conf.d/99-fcghact.conf \
  && if [ -x /usr/sbin/iptables-legacy ]; then update-alternatives --set iptables /usr/sbin/iptables-legacy; fi \
  && if [ -x /usr/sbin/ip6tables-legacy ]; then update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy; fi \

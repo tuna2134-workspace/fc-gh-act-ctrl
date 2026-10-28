@@ -154,6 +154,9 @@ type FirecrackerConfig struct {
 	// KeepLogs copies console and Firecracker logs to <state_dir>/logs/<vm-id>/
 	// before the VM directory is removed. Useful for debugging failed jobs.
 	KeepLogs bool `yaml:"keep_logs" env:"FIRECRACKER_KEEP_LOGS"`
+	// PreclonePool keeps N ready rootfs clones in <state_dir>/pool so VM start
+	// does not wait for the copy. 0 disables it.
+	PreclonePool int `yaml:"preclone_pool" env:"FIRECRACKER_PRECLONE_POOL"`
 }
 
 // NetworkConfig describes the host networking used by microVMs.
@@ -205,15 +208,16 @@ func Default() *Config {
 			MonitorInterval:     Duration(30 * time.Second),
 		},
 		Firecracker: FirecrackerConfig{
-			Binary:      "firecracker",
-			KernelImage: "/var/lib/fcghact/vmlinux",
-			RootfsImage: "/var/lib/fcghact/rootfs.ext4",
-			StateDir:    "/var/lib/fcghact",
-			VCPUCount:   2,
-			MemSizeMiB:  2048,
-			BootArgs:    "console=" + console + " reboot=k panic=1 pci=off net.ifnames=0 root=/dev/vda rw rootfstype=ext4",
-			LogLevel:    "Warning",
-			Reflink:     true,
+			Binary:       "firecracker",
+			KernelImage:  "/var/lib/fcghact/vmlinux",
+			RootfsImage:  "/var/lib/fcghact/rootfs.ext4",
+			StateDir:     "/var/lib/fcghact",
+			VCPUCount:    2,
+			MemSizeMiB:   2048,
+			BootArgs:     "console=" + console + " quiet loglevel=3 reboot=k panic=1 pci=off net.ifnames=0 root=/dev/vda rw rootfstype=ext4",
+			LogLevel:     "Warning",
+			Reflink:      true,
+			PreclonePool: 2,
 		},
 		Rootfs: RootfsConfig{
 			Prune: true,
@@ -356,6 +360,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Firecracker.MemSizeMiB <= 0 {
 		add("firecracker.mem_size_mib must be positive")
+	}
+	if c.Firecracker.PreclonePool < 0 {
+		add("firecracker.preclone_pool must not be negative")
 	}
 	if strings.Contains(c.Firecracker.BootArgs, "ip=") {
 		add("firecracker.boot_args must not contain ip= (it is generated from network config)")
